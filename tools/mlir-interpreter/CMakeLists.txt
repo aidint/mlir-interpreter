@@ -1,16 +1,14 @@
-add_executable(mlir-canon mlir-canon.cpp)
+add_executable(mlir-interpreter mlir-interpreter.cpp)
 
-target_link_libraries(mlir-canon PRIVATE
-  mlir-submodule
+target_link_libraries(mlir-interpreter PRIVATE
+  MLIRInterpreter
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRFuncDialect
   MLIRIR
   MLIRMathDialect
   MLIRParser
-  MLIRPass
   MLIRSCFDialect
   MLIRSupport
-  MLIRTransforms
   MLIRUBDialect
   LLVMSupport)

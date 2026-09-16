@@ -1,1 +1,1 @@
-add_subdirectory(mlir-canon)
+add_subdirectory(mlir-interpreter)

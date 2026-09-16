@@ -1,9 +1,4 @@
-//===- mlir-canon.cpp - Parse an MLIR file and canonicalize it ------------===//
-//
-// Reads an MLIR file, runs the canonicalize pass over it, and prints the
-// result.
-//
-//===----------------------------------------------------------------------===//
+#include "mlir-interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -16,14 +11,12 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
-#include "mlir/Transforms/Passes.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <string>
 
@@ -34,9 +27,8 @@ static cl::opt<std::string> inputFilename(cl::Positional,
                                           cl::init("-"),
                                           cl::value_desc("filename"));
 
-static cl::opt<std::string> outputFilename("o", cl::desc("Output filename"),
-                                           cl::value_desc("filename"),
-                                           cl::init("-"));
+static cl::opt<uint64_t> budget("budget", cl::desc("Evaluation step budget"),
+                                cl::init(1000));
 
 static cl::opt<bool> allowUnregisteredDialects(
     "allow-unregistered-dialect",
@@ -44,12 +36,7 @@ static cl::opt<bool> allowUnregisteredDialects(
 
 int main(int argc, char **argv) {
   llvm::InitLLVM initLLVM(argc, argv);
-
-  mlir::registerAsmPrinterCLOptions();
-  mlir::registerMLIRContextCLOptions();
-  mlir::registerPassManagerCLOptions();
-  cl::ParseCommandLineOptions(argc, argv,
-                              "Parse an MLIR file and canonicalize it\n");
+  cl::ParseCommandLineOptions(argc, argv, "Query every SSA value in a file\n");
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
@@ -75,19 +62,17 @@ int main(int argc, char **argv) {
   if (!module)
     return 1;
 
-  mlir::PassManager pm(&context);
-  if (mlir::failed(mlir::applyPassManagerCLOptions(pm)))
-    return 1;
-  pm.addPass(mlir::createCanonicalizerPass());
-  if (mlir::failed(pm.run(*module)))
-    return 1;
+  mlir::interpreter::Engine engine(budget);
+  mlir::AsmState asmState(*module);
 
-  auto output = mlir::openOutputFile(outputFilename, &errorMessage);
-  if (!output) {
-    llvm::errs() << errorMessage << "\n";
-    return 1;
-  }
-  module->print(output->os());
-  output->keep();
+  module->walk([&](mlir::Operation *op) {
+    for (mlir::Value result : op->getResults()) {
+      mlir::interpreter::Answer answer = engine.query(result);
+      result.printAsOperand(llvm::outs(), asmState);
+      llvm::outs() << " -> "
+                   << mlir::interpreter::stringifyAnswerKind(answer.kind)
+                   << "\n";
+    }
+  });
   return 0;
 }
