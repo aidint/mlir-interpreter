@@ -28,6 +28,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # LLVM + MLIR from the third_party/llvm-project submodule.
 include(cmake/LLVMSubmodule.cmake)
 
+add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 

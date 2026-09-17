@@ -2,6 +2,7 @@ add_executable(mlir-interpreter mlir-interpreter.cpp)
 
 target_link_libraries(mlir-interpreter PRIVATE
   MLIRInterpreter
+  MLIRInterpreterArith
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRFuncDialect

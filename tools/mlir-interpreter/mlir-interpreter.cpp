@@ -1,3 +1,4 @@
+#include "mlir-interpreter/ArithEval.h"
 #include "mlir-interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -42,6 +43,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                   mlir::func::FuncDialect, mlir::math::MathDialect,
                   mlir::scf::SCFDialect, mlir::ub::UBDialect>();
+  mlir::interpreter::registerArithEvalExternalModels(registry);
 
   mlir::MLIRContext context(registry);
   context.allowUnregisteredDialects(allowUnregisteredDialects);
@@ -69,9 +71,15 @@ int main(int argc, char **argv) {
     for (mlir::Value result : op->getResults()) {
       mlir::interpreter::Answer answer = engine.query(result);
       result.printAsOperand(llvm::outs(), asmState);
-      llvm::outs() << " -> "
-                   << mlir::interpreter::stringifyAnswerKind(answer.kind)
-                   << "\n";
+      llvm::outs() << " -> ";
+      const llvm::APInt *value =
+          answer.value ? std::any_cast<llvm::APInt>(&answer.value->payload)
+                       : nullptr;
+      if (value)
+        llvm::outs() << *value;
+      else
+        llvm::outs() << mlir::interpreter::stringifyAnswerKind(answer.kind);
+      llvm::outs() << "\n";
     }
   });
   return 0;
