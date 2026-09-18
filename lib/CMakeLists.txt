@@ -1,6 +1,10 @@
-add_library(MLIRInterpreterInterfaces EvaluableOpInterface.cpp)
+add_library(MLIRInterpreterInterfaces
+  EvaluableOpInterface.cpp
+  EvaluableAttrInterface.cpp)
 
-add_dependencies(MLIRInterpreterInterfaces MLIREvaluableOpInterfaceIncGen)
+add_dependencies(MLIRInterpreterInterfaces
+  MLIREvaluableOpInterfaceIncGen
+  MLIREvaluableAttrInterfaceIncGen)
 
 target_include_directories(MLIRInterpreterInterfaces PUBLIC
   "${PROJECT_SOURCE_DIR}/include"
@@ -16,6 +20,11 @@ add_library(MLIRInterpreter Engine.cpp)
 target_link_libraries(MLIRInterpreter PUBLIC
   MLIRInterpreterInterfaces
   MLIRFuncDialect)
+
+add_library(MLIRInterpreterBuiltin BuiltinAttrEval.cpp)
+
+target_link_libraries(MLIRInterpreterBuiltin PUBLIC
+  MLIRInterpreterInterfaces)
 
 add_library(MLIRInterpreterArith ArithEval.cpp)
 

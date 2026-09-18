@@ -1,4 +1,7 @@
 #include "mlir-interpreter/Engine.h"
+#include "mlir-interpreter/EvaluableAttrInterface.h"
+
+#include "mlir/IR/Matchers.h"
 
 #include "llvm/Support/DebugLog.h"
 
@@ -24,6 +27,20 @@ private:
   Engine &engine;
 };
 
+Answer evaluateConstant(Operation *op) {
+  Attribute attr;
+  if (!matchPattern(op, m_Constant(&attr)))
+    return {AnswerKind::Unknown, std::nullopt};
+  auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
+  if (!evaluable) {
+    LDBG() << "no interpreter value for attribute " << attr;
+    return {AnswerKind::Unknown, std::nullopt};
+  }
+  if (auto value = evaluable.toInterpreterValue())
+    return {AnswerKind::Known, std::move(value)};
+  return {AnswerKind::Unknown, std::nullopt};
+}
+
 } // namespace
 
 Engine::Engine(uint64_t budget) : budget(budget) {}
@@ -47,7 +64,7 @@ Answer Engine::evaluate(Value value) {
 
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
-  if (!evaluable) {
+  if (!evaluable && !op->hasTrait<OpTrait::ConstantLike>()) {
     LDBG() << "no evaluation function for '" << op->getName() << "'";
     return unknown;
   }
@@ -64,6 +81,9 @@ Answer Engine::evaluate(Value value) {
   if (remaining == 0)
     return {AnswerKind::Exhausted, std::nullopt};
   --remaining;
+
+  if (!evaluable)
+    return evaluateConstant(op);
 
   EngineEvalContext ctx(*this);
   SmallVector<Answer> results = evaluable.evaluate(operands, ctx);

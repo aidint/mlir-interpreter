@@ -19,18 +19,6 @@ const APInt *getInt(const std::optional<InterpreterValue> &value) {
   return value ? std::any_cast<APInt>(&value->payload) : nullptr;
 }
 
-struct ConstantOpEval
-    : EvaluableOpInterface::ExternalModel<ConstantOpEval, arith::ConstantOp> {
-  SmallVector<Answer> evaluate(Operation *op,
-                               ArrayRef<std::optional<InterpreterValue>>,
-                               EvalContext &) const {
-    auto attr = dyn_cast<IntegerAttr>(cast<arith::ConstantOp>(op).getValue());
-    if (!attr)
-      return {unknown()};
-    return {known(attr.getValue())};
-  }
-};
-
 struct AddIOpEval
     : EvaluableOpInterface::ExternalModel<AddIOpEval, arith::AddIOp> {
   SmallVector<Answer> evaluate(Operation *,
@@ -65,7 +53,6 @@ struct MulIOpEval
 
 void registerArithEvalExternalModels(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *ctx, arith::ArithDialect *) {
-    arith::ConstantOp::attachInterface<ConstantOpEval>(*ctx);
     arith::AddIOp::attachInterface<AddIOpEval>(*ctx);
     arith::MulIOp::attachInterface<MulIOpEval>(*ctx);
   });

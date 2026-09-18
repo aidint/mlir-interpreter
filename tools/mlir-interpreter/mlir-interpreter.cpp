@@ -1,10 +1,11 @@
 #include "mlir-interpreter/ArithEval.h"
+#include "mlir-interpreter/BuiltinAttrEval.h"
 #include "mlir-interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/AsmState.h"
@@ -41,9 +42,10 @@ int main(int argc, char **argv) {
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  mlir::func::FuncDialect, mlir::math::MathDialect,
+                  mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::scf::SCFDialect, mlir::ub::UBDialect>();
   mlir::interpreter::registerArithEvalExternalModels(registry);
+  mlir::interpreter::registerBuiltinAttrEvalExternalModels(registry);
 
   mlir::MLIRContext context(registry);
   context.allowUnregisteredDialects(allowUnregisteredDialects);
