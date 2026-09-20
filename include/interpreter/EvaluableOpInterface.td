@@ -1,5 +1,5 @@
-#ifndef MLIR_INTERPRETER_EVALUABLEOPINTERFACE
-#define MLIR_INTERPRETER_EVALUABLEOPINTERFACE
+#ifndef INTERPRETER_EVALUABLEOPINTERFACE
+#define INTERPRETER_EVALUABLEOPINTERFACE
 
 include "mlir/IR/OpBase.td"
 
@@ -14,8 +14,12 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
     InterfaceMethod<
       "Returns one answer per result.",
       "::llvm::SmallVector<::mlir::interpreter::Answer>", "evaluate",
-      (ins "::llvm::ArrayRef<::std::optional<::mlir::interpreter::InterpreterValue>>":$operands,
-           "::mlir::interpreter::EvalContext &":$ctx)>
+      (ins "::llvm::ArrayRef<::std::optional<::mlir::interpreter::EvalValue>>":$operands,
+           "::mlir::interpreter::EvalScope &":$scope)>,
+    InterfaceMethod<
+      "Returns whether stable results may be retained across queries.",
+      "bool", "isCacheable", (ins), [{}],
+      /*defaultImplementation=*/[{ return true; }]>
   ];
 }
 

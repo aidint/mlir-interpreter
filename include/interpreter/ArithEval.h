@@ -1,5 +1,5 @@
-#ifndef MLIR_INTERPRETER_ARITHEVAL_H
-#define MLIR_INTERPRETER_ARITHEVAL_H
+#ifndef INTERPRETER_ARITHEVAL_H
+#define INTERPRETER_ARITHEVAL_H
 
 namespace mlir {
 class DialectRegistry;

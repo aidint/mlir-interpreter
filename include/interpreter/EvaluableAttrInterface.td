@@ -1,5 +1,5 @@
-#ifndef MLIR_INTERPRETER_EVALUABLEATTRINTERFACE
-#define MLIR_INTERPRETER_EVALUABLEATTRINTERFACE
+#ifndef INTERPRETER_EVALUABLEATTRINTERFACE
+#define INTERPRETER_EVALUABLEATTRINTERFACE
 
 include "mlir/IR/Interfaces.td"
 
@@ -12,8 +12,8 @@ def EvaluableAttrInterface : AttrInterface<"EvaluableAttrInterface"> {
   let methods = [
     InterfaceMethod<
       "Returns the interpreter value this attribute denotes, if any.",
-      "::std::optional<::mlir::interpreter::InterpreterValue>",
-      "toInterpreterValue", (ins)>
+      "::std::optional<::mlir::interpreter::EvalValue>",
+      "toEvalValue", (ins "::mlir::interpreter::EvalSession &":$session)>
   ];
 }
 

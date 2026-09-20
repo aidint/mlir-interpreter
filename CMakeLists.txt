@@ -9,7 +9,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
   set(CMAKE_CXX_COMPILER clang++)
 endif()
 
-project(mlir-interpreter LANGUAGES C CXX)
+project(interpreter LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   message(WARNING "This project is meant to be built with clang++, "

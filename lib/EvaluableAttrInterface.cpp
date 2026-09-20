@@ -1,3 +1,3 @@
-#include "mlir-interpreter/EvaluableAttrInterface.h"
+#include "interpreter/EvaluableAttrInterface.h"
 
-#include "mlir-interpreter/EvaluableAttrInterface.cpp.inc"
+#include "interpreter/EvaluableAttrInterface.cpp.inc"

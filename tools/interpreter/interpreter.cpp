@@ -1,6 +1,7 @@
-#include "mlir-interpreter/ArithEval.h"
-#include "mlir-interpreter/BuiltinAttrEval.h"
-#include "mlir-interpreter/Engine.h"
+#include "interpreter/ArithEval.h"
+#include "interpreter/BuiltinAttrEval.h"
+#include "interpreter/BuiltinEvalValues.h"
+#include "interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -66,19 +67,23 @@ int main(int argc, char **argv) {
   if (!module)
     return 1;
 
-  mlir::interpreter::Engine engine(budget);
+  mlir::interpreter::EvalContext evalContext(&context);
+  mlir::interpreter::registerBuiltinEvalValues(evalContext);
+  mlir::interpreter::Engine engine(evalContext, budget);
   mlir::AsmState asmState(*module);
 
   module->walk([&](mlir::Operation *op) {
     for (mlir::Value result : op->getResults()) {
-      mlir::interpreter::Answer answer = engine.query(result);
+      mlir::interpreter::EvalBasket basket(evalContext);
+      mlir::interpreter::Answer answer = engine.query(result, basket);
       result.printAsOperand(llvm::outs(), asmState);
       llvm::outs() << " -> ";
-      const llvm::APInt *value =
-          answer.value ? std::any_cast<llvm::APInt>(&answer.value->payload)
-                       : nullptr;
+      auto value =
+          answer.value
+              ? llvm::dyn_cast<mlir::interpreter::IntEvalValue>(*answer.value)
+              : mlir::interpreter::IntEvalValue();
       if (value)
-        llvm::outs() << *value;
+        llvm::outs() << value.getValue();
       else
         llvm::outs() << mlir::interpreter::stringifyAnswerKind(answer.kind);
       llvm::outs() << "\n";

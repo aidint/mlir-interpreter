@@ -1,5 +1,6 @@
-#include "mlir-interpreter/BuiltinAttrEval.h"
-#include "mlir-interpreter/EvaluableAttrInterface.h"
+#include "interpreter/BuiltinAttrEval.h"
+#include "interpreter/BuiltinEvalValues.h"
+#include "interpreter/EvaluableAttrInterface.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinDialect.h"
@@ -10,8 +11,9 @@ namespace {
 
 struct IntegerAttrEval
     : EvaluableAttrInterface::ExternalModel<IntegerAttrEval, IntegerAttr> {
-  std::optional<InterpreterValue> toInterpreterValue(Attribute attr) const {
-    return InterpreterValue{cast<IntegerAttr>(attr).getValue()};
+  std::optional<EvalValue> toEvalValue(Attribute attr,
+                                       EvalSession &session) const {
+    return IntEvalValue::get(session, cast<IntegerAttr>(attr).getValue());
   }
 };
 

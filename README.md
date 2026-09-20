@@ -1,4 +1,4 @@
-# mlir-interpreter
+# interpreter
 
 C++/CMake project built with clang++ against MLIR from the
 `third_party/llvm-project` submodule (no system LLVM/MLIR is used).
@@ -16,19 +16,19 @@ build takes a few minutes. After that, ccache makes rebuilds fast.
 
 ## Layout
 
-- `include/mlir-interpreter/`, `lib/`:
-  - `MLIRInterpreterInterfaces`: `EvaluableOpInterface`, `Answer`, `EvalContext`.
-  - `MLIRInterpreter`: the engine.
-  - `MLIRInterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
-- `tools/mlir-interpreter/`: the `mlir-interpreter` tool.
+- `include/interpreter/`, `lib/`:
+  - `InterpreterInterfaces`: `EvaluableOpInterface`, `Answer`, `EvalContext`.
+  - `Interpreter`: the engine.
+  - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
+- `tools/interpreter/`: the `interpreter` tool.
 - `test/`: example MLIR inputs.
 
-## mlir-interpreter
+## interpreter
 
 Parses an MLIR file and queries every op result:
 
 ```sh
-$ build/debug/tools/mlir-interpreter/mlir-interpreter test/query.mlir
+$ build/debug/tools/interpreter/interpreter test/query.mlir
 %c1 -> 1
 ...
 ```
@@ -36,7 +36,7 @@ $ build/debug/tools/mlir-interpreter/mlir-interpreter test/query.mlir
 Options: `--budget=<steps>`, `--allow-unregistered-dialect`.
 
 It registers the `func`, `arith`, `cf`, `scf`, `math` and `ub` dialects. To
-support more, add them in `tools/mlir-interpreter/mlir-interpreter.cpp` and link
+support more, add them in `tools/interpreter/interpreter.cpp` and link
 the matching `MLIR*Dialect` libraries in its `CMakeLists.txt`.
 
 ## Updating LLVM

@@ -1,1 +1,1 @@
-add_subdirectory(mlir-interpreter)
+add_subdirectory(interpreter)

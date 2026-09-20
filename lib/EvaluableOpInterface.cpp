@@ -1,3 +1,3 @@
-#include "mlir-interpreter/EvaluableOpInterface.h"
+#include "interpreter/EvaluableOpInterface.h"
 
-#include "mlir-interpreter/EvaluableOpInterface.cpp.inc"
+#include "interpreter/EvaluableOpInterface.cpp.inc"
