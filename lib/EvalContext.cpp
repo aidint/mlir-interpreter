@@ -1,5 +1,5 @@
 #include "interpreter/EvalContext.h"
-#include "interpreter/AbstractEvalValue.h"
+#include "interpreter/EvalValueSupport.h"
 #include "interpreter/EvalCache.h"
 
 namespace mlir::interpreter {

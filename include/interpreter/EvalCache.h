@@ -45,19 +45,6 @@ private:
   DenseMap<Value, std::optional<EvalValue>> values;
 };
 
-class EvalBasket : public EvalArena {
-public:
-  explicit EvalBasket(EvalContext &ctx)
-      : EvalArena(ctx, false), cache(ctx.getCache()) {}
-
-  void beginQuery() { beginRetaining(); }
-
-  EvalValue retain(EvalValue value) { return EvalArena::retain(value); }
-
-private:
-  EvalCache &cache;
-};
-
 } // namespace mlir::interpreter
 
 #endif

@@ -1,7 +1,7 @@
 #ifndef INTERPRETER_EVALARENA_H
 #define INTERPRETER_EVALARENA_H
 
-#include "interpreter/AbstractEvalValue.h"
+#include "interpreter/EvalValueSupport.h"
 
 #include "mlir/Support/LLVM.h"
 

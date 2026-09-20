@@ -74,8 +74,7 @@ int main(int argc, char **argv) {
 
   module->walk([&](mlir::Operation *op) {
     for (mlir::Value result : op->getResults()) {
-      mlir::interpreter::EvalBasket basket(evalContext);
-      mlir::interpreter::Answer answer = engine.query(result, basket);
+      mlir::interpreter::Answer answer = engine.query(result);
       result.printAsOperand(llvm::outs(), asmState);
       llvm::outs() << " -> ";
       auto value =

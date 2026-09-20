@@ -14,6 +14,10 @@ cmake --build --preset debug
 Only the LLVM/MLIR libraries our targets link against are built. The first
 build takes a few minutes. After that, ccache makes rebuilds fast.
 
+```sh
+ctest --test-dir build/debug
+```
+
 ## Layout
 
 - `include/interpreter/`, `lib/`:
@@ -24,7 +28,8 @@ build takes a few minutes. After that, ccache makes rebuilds fast.
     (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
-- `test/`: example MLIR inputs.
+- `test/`: example MLIR inputs and `engine-lifetime`, a C++ regression for
+  arena lifetimes.
 
 ## interpreter
 

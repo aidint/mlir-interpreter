@@ -1,4 +1,5 @@
 #include "interpreter/Engine.h"
+#include "interpreter/EvalCache.h"
 #include "interpreter/EvaluableAttrInterface.h"
 
 #include "mlir/IR/Matchers.h"
@@ -44,21 +45,20 @@ Answer evaluateConstant(Operation *op, EvalSession &session) {
 
 } // namespace
 
-Engine::Engine(EvalContext &ctx, uint64_t budget) : ctx(ctx), budget(budget) {}
+Engine::Engine(EvalContext &ctx, uint64_t budget)
+    : ctx(ctx), budget(budget), answerArena(ctx, false) {}
 
 void Engine::registerType(TypeID type) {}
 
-Answer Engine::query(Value value, EvalBasket &basket) {
+Answer Engine::query(Value value) {
   assert(!session && "cannot start a query while another query is active");
-  assert(&basket.getContext() == &ctx &&
-         "answer basket belongs to a different evaluation context");
   remaining = budget;
   ctx.getCache().beginQuery();
-  basket.beginQuery();
+  answerArena.beginRetaining();
   session.emplace(ctx);
   Answer answer = evaluate(value);
   if (answer.value)
-    answer.value = basket.retain(*answer.value);
+    answer.value = answerArena.retain(*answer.value);
   session.reset();
   return answer;
 }

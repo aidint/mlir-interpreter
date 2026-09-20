@@ -1,7 +1,7 @@
 #ifndef INTERPRETER_EVALVALUE_H
 #define INTERPRETER_EVALVALUE_H
 
-#include "interpreter/AbstractEvalValue.h"
+#include "interpreter/EvalValueSupport.h"
 #include "interpreter/EvalArena.h"
 #include "interpreter/EvalContext.h"
 

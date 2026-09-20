@@ -1,5 +1,5 @@
-#ifndef INTERPRETER_ABSTRACTEVALVALUE_H
-#define INTERPRETER_ABSTRACTEVALVALUE_H
+#ifndef INTERPRETER_EVALVALUESUPPORT_H
+#define INTERPRETER_EVALVALUESUPPORT_H
 
 #include "mlir/Support/InterfaceSupport.h"
 #include "mlir/Support/TypeID.h"
@@ -29,6 +29,10 @@ private:
 
 class AbstractEvalValue {
 public:
+  /// Copies `storage` into `arena` and returns the new storage. Registration
+  /// binds this to the value class's `cloneStorage`, capturing the concrete
+  /// type while it is still known, so an arena can copy a value it only holds
+  /// as an `EvalValueStorage *`.
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalArena &, const detail::EvalValueStorage &);
 

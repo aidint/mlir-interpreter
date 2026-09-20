@@ -1,7 +1,7 @@
 #ifndef INTERPRETER_ENGINE_H
 #define INTERPRETER_ENGINE_H
 
-#include "interpreter/EvalCache.h"
+#include "interpreter/EvalArena.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvaluableOpInterface.h"
 
@@ -26,7 +26,7 @@ public:
 
   EvalContext &getContext() { return ctx; }
 
-  Answer query(Value value, EvalBasket &basket);
+  Answer query(Value value);
   FailureOr<func::FuncOp> specialize(func::CallOp call,
                                      ArrayRef<std::optional<EvalValue>> args);
 
@@ -40,6 +40,7 @@ private:
   EvalContext &ctx;
   uint64_t budget;
   uint64_t remaining = 0;
+  EvalArena answerArena;
   std::optional<EvalSession> session;
 };
 
