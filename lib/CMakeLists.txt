@@ -1,4 +1,5 @@
 add_library(InterpreterInterfaces
+  EvalArena.cpp
   EvalContext.cpp
   EvalValue.cpp
   EvaluableOpInterface.cpp
@@ -23,14 +24,4 @@ target_link_libraries(Interpreter PUBLIC
   InterpreterInterfaces
   MLIRFuncDialect)
 
-add_library(InterpreterBuiltin BuiltinAttrEval.cpp BuiltinEvalValues.cpp)
-
-target_link_libraries(InterpreterBuiltin PUBLIC
-  InterpreterInterfaces)
-
-add_library(InterpreterArith ArithEval.cpp)
-
-target_link_libraries(InterpreterArith PUBLIC
-  InterpreterInterfaces
-  InterpreterBuiltin
-  MLIRArithDialect)
+add_subdirectory(Dialects)

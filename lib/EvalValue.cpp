@@ -1,3 +1,3 @@
-#include "interpreter/EvalValue.h"
+#include "interpreter/EvalValueInterfaces.h"
 
 MLIR_DEFINE_EXPLICIT_TYPE_ID(mlir::interpreter::EquatableEvalValueInterface)

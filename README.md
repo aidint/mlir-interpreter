@@ -19,6 +19,9 @@ build takes a few minutes. After that, ccache makes rebuilds fast.
 - `include/interpreter/`, `lib/`:
   - `InterpreterInterfaces`: `EvaluableOpInterface`, `Answer`, `EvalContext`.
   - `Interpreter`: the engine.
+- `include/interpreter/Dialects/`, `lib/Dialects/`, one library per dialect:
+  - `InterpreterBuiltin`: builtin values and attribute models
+    (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
 - `test/`: example MLIR inputs.

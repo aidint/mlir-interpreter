@@ -1,6 +1,7 @@
 #ifndef INTERPRETER_EVALUABLEOPINTERFACE_H
 #define INTERPRETER_EVALUABLEOPINTERFACE_H
 
+#include "interpreter/EvalArena.h"
 #include "interpreter/EvalValue.h"
 
 #include "mlir/IR/OpDefinition.h"

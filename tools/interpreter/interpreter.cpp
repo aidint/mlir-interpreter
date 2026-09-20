@@ -1,6 +1,6 @@
-#include "interpreter/ArithEval.h"
-#include "interpreter/BuiltinAttrEval.h"
-#include "interpreter/BuiltinEvalValues.h"
+#include "interpreter/Dialects/Arith/ArithEval.h"
+#include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
+#include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"

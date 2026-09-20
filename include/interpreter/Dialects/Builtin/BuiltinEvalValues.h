@@ -1,7 +1,9 @@
-#ifndef INTERPRETER_BUILTINEVALVALUES_H
-#define INTERPRETER_BUILTINEVALVALUES_H
+#ifndef INTERPRETER_DIALECTS_BUILTIN_BUILTINEVALVALUES_H
+#define INTERPRETER_DIALECTS_BUILTIN_BUILTINEVALVALUES_H
 
+#include "interpreter/EvalContext.h"
 #include "interpreter/EvalValue.h"
+#include "interpreter/EvalValueInterfaces.h"
 
 #include "llvm/ADT/APInt.h"
 

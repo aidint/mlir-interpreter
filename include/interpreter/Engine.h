@@ -1,6 +1,8 @@
 #ifndef INTERPRETER_ENGINE_H
 #define INTERPRETER_ENGINE_H
 
+#include "interpreter/EvalCache.h"
+#include "interpreter/EvalContext.h"
 #include "interpreter/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

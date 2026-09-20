@@ -1,5 +1,5 @@
-#include "interpreter/ArithEval.h"
-#include "interpreter/BuiltinEvalValues.h"
+#include "interpreter/Dialects/Arith/ArithEval.h"
+#include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
