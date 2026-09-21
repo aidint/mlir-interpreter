@@ -1,28 +1,22 @@
 #ifndef INTERPRETER_ENGINE_H
 #define INTERPRETER_ENGINE_H
 
-#include "interpreter/EvalArena.h"
 #include "interpreter/EvalContext.h"
+#include "interpreter/EvalValueStorageAllocator.h"
 #include "interpreter/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/TypeID.h"
 
-#include "llvm/ADT/StringRef.h"
-
 #include <cstdint>
 #include <optional>
 
 namespace mlir::interpreter {
 
-class EngineScope;
-
 class Engine {
 public:
   Engine(EvalContext &ctx, uint64_t budget);
-
-  void registerType(TypeID type);
 
   EvalContext &getContext() { return ctx; }
 
@@ -31,7 +25,7 @@ public:
                                      ArrayRef<std::optional<EvalValue>> args);
 
 private:
-  friend class EngineScope;
+  friend class EvalScope;
 
   EvalSession &getSession() { return *session; }
   Answer queryNested(Value value);
@@ -40,7 +34,7 @@ private:
   EvalContext &ctx;
   uint64_t budget;
   uint64_t remaining = 0;
-  EvalArena answerArena;
+  EvalValueStorageAllocator answerAllocator;
   std::optional<EvalSession> session;
 };
 

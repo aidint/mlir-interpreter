@@ -9,7 +9,7 @@
 namespace mlir::interpreter {
 
 class AbstractEvalValue;
-class EvalArena;
+class EvalValueStorageAllocator;
 class EvalContext;
 
 namespace detail {
@@ -22,19 +22,19 @@ public:
 
 private:
   const AbstractEvalValue *abstractEvalValue = nullptr;
-  friend class ::mlir::interpreter::EvalArena;
+  friend class ::mlir::interpreter::EvalValueStorageAllocator;
 };
 
 } // namespace detail
 
 class AbstractEvalValue {
 public:
-  /// Copies `storage` into `arena` and returns the new storage. Registration
-  /// binds this to the value class's `cloneStorage`, capturing the concrete
-  /// type while it is still known, so an arena can copy a value it only holds
-  /// as an `EvalValueStorage *`.
+  /// Copies `storage` into `allocator` and returns the new storage.
+  /// Registration binds this to the value class's `cloneStorage`, capturing the
+  /// concrete type while it is still known, so an allocator can copy a value it
+  /// only holds as an `EvalValueStorage *`.
   using CloneFn = detail::EvalValueStorage *(*)(
-      EvalArena &, const detail::EvalValueStorage &);
+      EvalValueStorageAllocator &, const detail::EvalValueStorage &);
 
   TypeID getTypeID() const { return typeID; }
 
@@ -56,14 +56,15 @@ private:
       : typeID(typeID), interfaceMap(std::move(interfaceMap)), cloneFn(clone) {}
 
   detail::EvalValueStorage *
-  clone(EvalArena &arena, const detail::EvalValueStorage &storage) const {
-    return cloneFn(arena, storage);
+  clone(EvalValueStorageAllocator &allocator,
+        const detail::EvalValueStorage &storage) const {
+    return cloneFn(allocator, storage);
   }
 
   TypeID typeID;
   ::mlir::detail::InterfaceMap interfaceMap;
   CloneFn cloneFn;
-  friend class EvalArena;
+  friend class EvalValueStorageAllocator;
   friend class EvalContext;
 };
 

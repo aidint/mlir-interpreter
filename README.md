@@ -29,7 +29,7 @@ ctest --test-dir build/debug
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
 - `test/`: example MLIR inputs and `engine-lifetime`, a C++ regression for
-  arena lifetimes.
+  allocator lifetimes.
 
 ## interpreter
 

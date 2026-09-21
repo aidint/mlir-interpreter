@@ -1,9 +1,9 @@
 #ifndef INTERPRETER_EVALVALUE_H
 #define INTERPRETER_EVALVALUE_H
 
-#include "interpreter/EvalValueSupport.h"
-#include "interpreter/EvalArena.h"
 #include "interpreter/EvalContext.h"
+#include "interpreter/EvalValueStorageAllocator.h"
+#include "interpreter/EvalValueSupport.h"
 
 #include "mlir/Support/InterfaceSupport.h"
 #include "mlir/Support/TypeID.h"
@@ -77,17 +77,19 @@ public:
     return ::mlir::detail::InterfaceMap::get<Traits<ConcreteT>...>();
   }
 
-  static StorageT *cloneStorage(EvalArena &arena, const StorageT &storage) {
-    return arena.allocate<StorageT>(storage.getAbstractEvalValue(), storage);
+  static StorageT *cloneStorage(EvalValueStorageAllocator &allocator,
+                                const StorageT &storage) {
+    return allocator.allocate<StorageT>(storage.getAbstractEvalValue(),
+                                        storage);
   }
 
   template <typename... Args>
-  static ConcreteT get(EvalArena &arena, Args &&...args) {
-    EvalContext &ctx = arena.getContext();
+  static ConcreteT get(EvalValueStorageAllocator &allocator, Args &&...args) {
+    EvalContext &ctx = allocator.getContext();
     return ConcreteT(
-        arena.allocate<StorageT>(ctx.getAbstractEvalValue<ConcreteT>(),
-                                 std::forward<Args>(args)...),
-        arena.createsCachedValues());
+        allocator.allocate<StorageT>(ctx.getAbstractEvalValue<ConcreteT>(),
+                                     std::forward<Args>(args)...),
+        allocator.isCacheAllocator());
   }
 
 protected:

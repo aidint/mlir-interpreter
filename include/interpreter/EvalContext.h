@@ -17,7 +17,7 @@ class MLIRContext;
 namespace mlir::interpreter {
 
 class AbstractEvalValue;
-class EvalArena;
+class EvalValueStorageAllocator;
 class EvalCache;
 
 namespace detail {
@@ -61,19 +61,19 @@ public:
 
 private:
   using CloneFn = detail::EvalValueStorage *(*)(
-      EvalArena &, const detail::EvalValueStorage &);
+      EvalValueStorageAllocator &, const detail::EvalValueStorage &);
 
   template <typename T> void registerAbstractEvalValue() {
     TypeID typeID = TypeID::get<T>();
     if (abstractEvalValues.contains(typeID))
       return;
     using StorageT = typename T::ImplType;
-    auto clone =
-        +[](EvalArena &arena, const detail::EvalValueStorage &storage) {
-          auto &concrete = static_cast<const StorageT &>(storage);
-          return static_cast<detail::EvalValueStorage *>(
-              T::cloneStorage(arena, concrete));
-        };
+    auto clone = +[](EvalValueStorageAllocator &allocator,
+                     const detail::EvalValueStorage &storage) {
+      auto &concrete = static_cast<const StorageT &>(storage);
+      return static_cast<detail::EvalValueStorage *>(
+          T::cloneStorage(allocator, concrete));
+    };
     insertAbstractEvalValue(typeID, T::getInterfaceMap(), clone);
   }
 

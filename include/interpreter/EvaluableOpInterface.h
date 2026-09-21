@@ -1,8 +1,8 @@
 #ifndef INTERPRETER_EVALUABLEOPINTERFACE_H
 #define INTERPRETER_EVALUABLEOPINTERFACE_H
 
-#include "interpreter/EvalArena.h"
 #include "interpreter/EvalValue.h"
+#include "interpreter/EvalValueStorageAllocator.h"
 
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Region.h"
@@ -22,14 +22,20 @@ struct Answer {
   std::optional<EvalValue> value;
 };
 
+class Engine;
+
+/// The view an operation's evaluation gets of the engine that drives it.
 class EvalScope {
 public:
-  virtual ~EvalScope() = default;
+  explicit EvalScope(Engine &engine) : engine(engine) {}
 
-  virtual Answer query(Value value) = 0;
-  virtual SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args) = 0;
-  virtual bool isOrdered() const = 0;
-  virtual EvalSession &getSession() = 0;
+  Answer query(Value value);
+  SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args);
+  bool isOrdered() const;
+  EvalSession &getSession();
+
+private:
+  Engine &engine;
 };
 
 } // namespace mlir::interpreter

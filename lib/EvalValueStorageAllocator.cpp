@@ -1,16 +1,16 @@
-#include "interpreter/EvalArena.h"
+#include "interpreter/EvalValueStorageAllocator.h"
 #include "interpreter/EvalValue.h"
 
 namespace mlir::interpreter {
 
-EvalValue EvalArena::retain(EvalValue value) {
+EvalValue EvalValueStorageAllocator::retain(EvalValue value) {
   if (value.isCached())
     return value;
-  return EvalValue(retainStorage(value.getImpl()), createsCachedValues());
+  return EvalValue(retainStorage(value.getImpl()), isCacheAllocator());
 }
 
 detail::EvalValueStorage *
-EvalArena::retainStorage(detail::EvalValueStorage *storage) {
+EvalValueStorageAllocator::retainStorage(detail::EvalValueStorage *storage) {
   auto [it, inserted] = retained.try_emplace(storage);
   if (!inserted)
     return it->second;

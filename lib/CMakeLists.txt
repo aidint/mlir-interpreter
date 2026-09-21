@@ -1,5 +1,5 @@
 add_library(InterpreterInterfaces
-  EvalArena.cpp
+  EvalValueStorageAllocator.cpp
   EvalContext.cpp
   EvalValue.cpp
   EvaluableOpInterface.cpp

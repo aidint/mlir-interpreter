@@ -10,22 +10,15 @@
 
 namespace mlir::interpreter {
 
-class EngineScope : public EvalScope {
-public:
-  explicit EngineScope(Engine &engine) : engine(engine) {}
+Answer EvalScope::query(Value value) { return engine.queryNested(value); }
 
-  Answer query(Value value) override { return engine.queryNested(value); }
+SmallVector<Answer> EvalScope::walk(Region &region, ArrayRef<Answer> args) {
+  return {};
+}
 
-  SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args) override {
-    return {};
-  }
+bool EvalScope::isOrdered() const { return false; }
 
-  bool isOrdered() const override { return false; }
-  EvalSession &getSession() override { return engine.getSession(); }
-
-private:
-  Engine &engine;
-};
+EvalSession &EvalScope::getSession() { return engine.getSession(); }
 
 namespace {
 
@@ -46,19 +39,17 @@ Answer evaluateConstant(Operation *op, EvalSession &session) {
 } // namespace
 
 Engine::Engine(EvalContext &ctx, uint64_t budget)
-    : ctx(ctx), budget(budget), answerArena(ctx, false) {}
-
-void Engine::registerType(TypeID type) {}
+    : ctx(ctx), budget(budget), answerAllocator(ctx, false) {}
 
 Answer Engine::query(Value value) {
   assert(!session && "cannot start a query while another query is active");
   remaining = budget;
   ctx.getCache().beginQuery();
-  answerArena.beginRetaining();
+  answerAllocator.beginRetaining();
   session.emplace(ctx);
   Answer answer = evaluate(value);
   if (answer.value)
-    answer.value = answerArena.retain(*answer.value);
+    answer.value = answerAllocator.retain(*answer.value);
   session.reset();
   return answer;
 }
@@ -103,7 +94,7 @@ Answer Engine::evaluate(Value value) {
   if (!evaluable) {
     results.push_back(evaluateConstant(op, *session));
   } else {
-    EngineScope scope(*this);
+    EvalScope scope(*this);
     results = evaluable.evaluate(operands, scope);
   }
 

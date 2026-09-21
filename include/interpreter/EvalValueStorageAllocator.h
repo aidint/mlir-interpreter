@@ -1,5 +1,5 @@
-#ifndef INTERPRETER_EVALARENA_H
-#define INTERPRETER_EVALARENA_H
+#ifndef INTERPRETER_EVALVALUESTORAGEALLOCATOR_H
+#define INTERPRETER_EVALVALUESTORAGEALLOCATOR_H
 
 #include "interpreter/EvalValueSupport.h"
 
@@ -18,18 +18,20 @@ namespace mlir::interpreter {
 class EvalContext;
 class EvalValue;
 
-class EvalArena {
+class EvalValueStorageAllocator {
 public:
-  EvalArena(EvalContext &ctx, bool cached) : ctx(ctx), cached(cached) {}
-  EvalArena(const EvalArena &) = delete;
-  EvalArena &operator=(const EvalArena &) = delete;
-  ~EvalArena() {
+  EvalValueStorageAllocator(EvalContext &ctx, bool is_cache)
+      : ctx(ctx), is_cache(is_cache) {}
+  EvalValueStorageAllocator(const EvalValueStorageAllocator &) = delete;
+  EvalValueStorageAllocator &
+  operator=(const EvalValueStorageAllocator &) = delete;
+  ~EvalValueStorageAllocator() {
     for (auto &[ptr, destroy] : llvm::reverse(destructors))
       destroy(ptr);
   }
 
   EvalContext &getContext() const { return ctx; }
-  bool createsCachedValues() const { return cached; }
+  bool isCacheAllocator() const { return is_cache; }
   void beginRetaining() { retained.clear(); }
 
   template <typename StorageT, typename... Args>
@@ -53,15 +55,16 @@ private:
   detail::EvalValueStorage *retainStorage(detail::EvalValueStorage *storage);
 
   EvalContext &ctx;
-  bool cached;
+  bool is_cache;
   llvm::BumpPtrAllocator allocator;
   SmallVector<std::pair<void *, void (*)(void *)>> destructors;
   DenseMap<detail::EvalValueStorage *, detail::EvalValueStorage *> retained;
 };
 
-class EvalSession : public EvalArena {
+class EvalSession : public EvalValueStorageAllocator {
 public:
-  explicit EvalSession(EvalContext &ctx) : EvalArena(ctx, false) {}
+  explicit EvalSession(EvalContext &ctx)
+      : EvalValueStorageAllocator(ctx, false) {}
 };
 
 } // namespace mlir::interpreter
