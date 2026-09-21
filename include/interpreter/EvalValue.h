@@ -77,12 +77,6 @@ public:
     return ::mlir::detail::InterfaceMap::get<Traits<ConcreteT>...>();
   }
 
-  static StorageT *cloneStorage(EvalValueStorageAllocator &allocator,
-                                const StorageT &storage) {
-    return allocator.allocate<StorageT>(storage.getAbstractEvalValue(),
-                                        storage);
-  }
-
   template <typename... Args>
   static ConcreteT get(EvalValueStorageAllocator &allocator, Args &&...args) {
     EvalContext &ctx = allocator.getContext();

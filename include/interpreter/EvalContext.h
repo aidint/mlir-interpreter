@@ -1,6 +1,8 @@
 #ifndef INTERPRETER_EVALCONTEXT_H
 #define INTERPRETER_EVALCONTEXT_H
 
+#include "interpreter/EvalValueStorageAllocator.h"
+
 #include "mlir/Support/InterfaceSupport.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/TypeID.h"
@@ -70,9 +72,9 @@ private:
     using StorageT = typename T::ImplType;
     auto clone = +[](EvalValueStorageAllocator &allocator,
                      const detail::EvalValueStorage &storage) {
-      auto &concrete = static_cast<const StorageT &>(storage);
       return static_cast<detail::EvalValueStorage *>(
-          T::cloneStorage(allocator, concrete));
+          allocator.cloneStorage<StorageT>(
+              static_cast<const StorageT *>(&storage)));
     };
     insertAbstractEvalValue(typeID, T::getInterfaceMap(), clone);
   }

@@ -30,9 +30,10 @@ private:
 class AbstractEvalValue {
 public:
   /// Copies `storage` into `allocator` and returns the new storage.
-  /// Registration binds this to the value class's `cloneStorage`, capturing the
-  /// concrete type while it is still known, so an allocator can copy a value it
-  /// only holds as an `EvalValueStorage *`.
+  /// Registration binds this to `EvalValueStorageAllocator::cloneStorage`
+  /// instantiated for the value class's storage type, capturing the concrete
+  /// type while it is still known, so an allocator can copy a value it only
+  /// holds as an `EvalValueStorage *`.
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
 

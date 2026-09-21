@@ -49,6 +49,11 @@ public:
     return storage;
   }
 
+  template <typename StorageT>
+  StorageT *cloneStorage(const StorageT *storage) {
+    return allocate<StorageT>(storage->getAbstractEvalValue(), *storage);
+  }
+
   EvalValue retain(EvalValue value);
 
 private:
