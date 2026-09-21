@@ -12,7 +12,7 @@ namespace {
 
 Answer known(EvalScope &scope, APInt value) {
   return {AnswerKind::Known,
-          IntEvalValue::get(scope.getSession(), std::move(value))};
+          IntEvalValue::get(scope.getAllocator(), std::move(value))};
 }
 
 Answer unknown() { return {AnswerKind::Unknown, std::nullopt}; }

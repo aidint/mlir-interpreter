@@ -27,7 +27,7 @@ public:
 private:
   friend class EvalScope;
 
-  EvalSession &getSession() { return *session; }
+  EvalValueStorageAllocator &getQueryAllocator() { return *queryAllocator; }
   Answer queryNested(Value value);
   Answer evaluate(Value value);
 
@@ -35,7 +35,7 @@ private:
   uint64_t budget;
   uint64_t remaining = 0;
   EvalValueStorageAllocator answerAllocator;
-  std::optional<EvalSession> session;
+  std::optional<EvalValueStorageAllocator> queryAllocator;
 };
 
 StringRef stringifyAnswerKind(AnswerKind kind);

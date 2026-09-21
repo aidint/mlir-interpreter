@@ -66,12 +66,6 @@ private:
   DenseMap<detail::EvalValueStorage *, detail::EvalValueStorage *> retained;
 };
 
-class EvalSession : public EvalValueStorageAllocator {
-public:
-  explicit EvalSession(EvalContext &ctx)
-      : EvalValueStorageAllocator(ctx, false) {}
-};
-
 } // namespace mlir::interpreter
 
 #endif

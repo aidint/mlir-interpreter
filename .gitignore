@@ -3,6 +3,6 @@
 /.cache/
 .env*
 CLAUDE.md
-AGENT.md
+AGENTS.md
 specs
 .clangd

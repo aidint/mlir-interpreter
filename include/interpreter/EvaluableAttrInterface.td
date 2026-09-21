@@ -13,7 +13,7 @@ def EvaluableAttrInterface : AttrInterface<"EvaluableAttrInterface"> {
     InterfaceMethod<
       "Returns the interpreter value this attribute denotes, if any.",
       "::std::optional<::mlir::interpreter::EvalValue>",
-      "toEvalValue", (ins "::mlir::interpreter::EvalSession &":$session)>
+      "toEvalValue", (ins "::mlir::interpreter::EvalValueStorageAllocator &":$allocator)>
   ];
 }
 

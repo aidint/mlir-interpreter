@@ -11,9 +11,9 @@ namespace {
 
 struct IntegerAttrEval
     : EvaluableAttrInterface::ExternalModel<IntegerAttrEval, IntegerAttr> {
-  std::optional<EvalValue> toEvalValue(Attribute attr,
-                                       EvalSession &session) const {
-    return IntEvalValue::get(session, cast<IntegerAttr>(attr).getValue());
+  std::optional<EvalValue>
+  toEvalValue(Attribute attr, EvalValueStorageAllocator &allocator) const {
+    return IntEvalValue::get(allocator, cast<IntegerAttr>(attr).getValue());
   }
 };
 

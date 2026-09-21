@@ -69,7 +69,7 @@ struct SubIOpEval
     const APInt &lhs = cast<IntEvalValue>(*operands[0]).getValue();
     const APInt &rhs = cast<IntEvalValue>(*operands[1]).getValue();
     return {{AnswerKind::Known,
-             TrackedEvalValue::get(scope.getSession(), lhs - rhs)}};
+             TrackedEvalValue::get(scope.getAllocator(), lhs - rhs)}};
   }
 
   bool isCacheable(Operation *) const { return false; }

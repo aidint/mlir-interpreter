@@ -18,11 +18,13 @@ SmallVector<Answer> EvalScope::walk(Region &region, ArrayRef<Answer> args) {
 
 bool EvalScope::isOrdered() const { return false; }
 
-EvalSession &EvalScope::getSession() { return engine.getSession(); }
+EvalValueStorageAllocator &EvalScope::getAllocator() {
+  return engine.getQueryAllocator();
+}
 
 namespace {
 
-Answer evaluateConstant(Operation *op, EvalSession &session) {
+Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
   Attribute attr;
   if (!matchPattern(op, m_Constant(&attr)))
     return {AnswerKind::Unknown, std::nullopt};
@@ -31,7 +33,7 @@ Answer evaluateConstant(Operation *op, EvalSession &session) {
     LDBG() << "no interpreter value for attribute " << attr;
     return {AnswerKind::Unknown, std::nullopt};
   }
-  if (auto value = evaluable.toEvalValue(session))
+  if (auto value = evaluable.toEvalValue(allocator))
     return {AnswerKind::Known, std::move(value)};
   return {AnswerKind::Unknown, std::nullopt};
 }
@@ -42,20 +44,21 @@ Engine::Engine(EvalContext &ctx, uint64_t budget)
     : ctx(ctx), budget(budget), answerAllocator(ctx, false) {}
 
 Answer Engine::query(Value value) {
-  assert(!session && "cannot start a query while another query is active");
+  assert(!queryAllocator &&
+         "cannot start a query while another query is active");
   remaining = budget;
   ctx.getCache().beginQuery();
   answerAllocator.beginRetaining();
-  session.emplace(ctx);
+  queryAllocator.emplace(ctx, false);
   Answer answer = evaluate(value);
   if (answer.value)
     answer.value = answerAllocator.retain(*answer.value);
-  session.reset();
+  queryAllocator.reset();
   return answer;
 }
 
 Answer Engine::queryNested(Value value) {
-  assert(session && "nested query requires an active evaluation session");
+  assert(queryAllocator && "nested query requires an active query");
   return evaluate(value);
 }
 
@@ -92,7 +95,7 @@ Answer Engine::evaluate(Value value) {
   bool cacheable = !evaluable || evaluable.isCacheable();
   SmallVector<Answer> results;
   if (!evaluable) {
-    results.push_back(evaluateConstant(op, *session));
+    results.push_back(evaluateConstant(op, *queryAllocator));
   } else {
     EvalScope scope(*this);
     results = evaluable.evaluate(operands, scope);

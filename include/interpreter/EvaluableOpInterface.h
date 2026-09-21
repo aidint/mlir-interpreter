@@ -32,7 +32,7 @@ public:
   Answer query(Value value);
   SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args);
   bool isOrdered() const;
-  EvalSession &getSession();
+  EvalValueStorageAllocator &getAllocator();
 
 private:
   Engine &engine;
