@@ -3,7 +3,7 @@
 
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValue.h"
-#include "interpreter/EvalValueInterfaces.h"
+#include "interpreter/Interfaces/EquatableEvalValueInterface.h"
 
 #include "llvm/ADT/APInt.h"
 

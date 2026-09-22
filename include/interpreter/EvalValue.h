@@ -13,7 +13,6 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/Support/Casting.h"
 
-#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -90,6 +89,28 @@ protected:
   StorageT *getImpl() const {
     return static_cast<StorageT *>(EvalValue::getImpl());
   }
+};
+
+template <typename ConcreteType, template <typename> class TraitType>
+class EvalValueTraitBase {};
+
+template <typename ConcreteType, typename Traits>
+class EvalValueInterface
+    : public ::mlir::detail::Interface<ConcreteType, EvalValue, Traits,
+                                       EvalValue, EvalValueTraitBase> {
+public:
+  using Base = EvalValueInterface<ConcreteType, Traits>;
+  using InterfaceBase =
+      ::mlir::detail::Interface<ConcreteType, EvalValue, Traits, EvalValue,
+                                EvalValueTraitBase>;
+  using InterfaceBase::InterfaceBase;
+
+private:
+  static typename InterfaceBase::Concept *getInterfaceFor(EvalValue value) {
+    return value.getAbstractEvalValue().getInterface<ConcreteType>();
+  }
+
+  friend InterfaceBase;
 };
 
 } // namespace mlir::interpreter

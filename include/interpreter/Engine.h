@@ -3,7 +3,7 @@
 
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValueStorageAllocator.h"
-#include "interpreter/EvaluableOpInterface.h"
+#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LLVM.h"

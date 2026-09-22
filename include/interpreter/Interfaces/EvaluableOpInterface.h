@@ -40,6 +40,6 @@ private:
 
 } // namespace mlir::interpreter
 
-#include "interpreter/EvaluableOpInterface.h.inc"
+#include "interpreter/Interfaces/EvaluableOpInterface.h.inc"
 
 #endif

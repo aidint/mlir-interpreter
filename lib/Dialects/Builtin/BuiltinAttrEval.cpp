@@ -1,6 +1,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
-#include "interpreter/EvaluableAttrInterface.h"
+#include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinDialect.h"

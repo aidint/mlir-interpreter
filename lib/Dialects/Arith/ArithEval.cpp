@@ -1,6 +1,6 @@
 #include "interpreter/Dialects/Arith/ArithEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
-#include "interpreter/EvaluableOpInterface.h"
+#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"

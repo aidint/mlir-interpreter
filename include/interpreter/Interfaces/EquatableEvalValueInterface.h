@@ -1,5 +1,5 @@
-#ifndef INTERPRETER_EVALVALUEINTERFACES_H
-#define INTERPRETER_EVALVALUEINTERFACES_H
+#ifndef INTERPRETER_EQUATABLEEVALVALUEINTERFACE_H
+#define INTERPRETER_EQUATABLEEVALVALUEINTERFACE_H
 
 #include "interpreter/EvalValue.h"
 
@@ -10,28 +10,6 @@
 #include "llvm/Support/Casting.h"
 
 namespace mlir::interpreter {
-
-template <typename ConcreteType, template <typename> class TraitType>
-class EvalValueTraitBase {};
-
-template <typename ConcreteType, typename Traits>
-class EvalValueInterface
-    : public ::mlir::detail::Interface<ConcreteType, EvalValue, Traits,
-                                       EvalValue, EvalValueTraitBase> {
-public:
-  using Base = EvalValueInterface<ConcreteType, Traits>;
-  using InterfaceBase =
-      ::mlir::detail::Interface<ConcreteType, EvalValue, Traits, EvalValue,
-                                EvalValueTraitBase>;
-  using InterfaceBase::InterfaceBase;
-
-private:
-  static typename InterfaceBase::Concept *getInterfaceFor(EvalValue value) {
-    return value.getAbstractEvalValue().getInterface<ConcreteType>();
-  }
-
-  friend InterfaceBase;
-};
 
 class EquatableEvalValueInterface;
 

@@ -4,7 +4,7 @@
 #include "interpreter/Engine.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValue.h"
-#include "interpreter/EvaluableOpInterface.h"
+#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"

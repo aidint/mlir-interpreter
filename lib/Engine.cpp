@@ -1,6 +1,6 @@
 #include "interpreter/Engine.h"
 #include "interpreter/EvalCache.h"
-#include "interpreter/EvaluableAttrInterface.h"
+#include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
 #include "mlir/IR/Matchers.h"
 

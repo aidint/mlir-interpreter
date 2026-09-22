@@ -8,6 +8,6 @@
 
 #include <optional>
 
-#include "interpreter/EvaluableAttrInterface.h.inc"
+#include "interpreter/Interfaces/EvaluableAttrInterface.h.inc"
 
 #endif
