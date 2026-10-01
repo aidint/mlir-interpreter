@@ -69,7 +69,8 @@ int main(int argc, char **argv) {
 
   mlir::interpreter::EvalContext evalContext(&context);
   mlir::interpreter::registerBuiltinEvalValues(evalContext);
-  mlir::interpreter::Engine engine(evalContext, budget);
+  mlir::interpreter::EvalCache cache(evalContext);
+  mlir::interpreter::Engine engine(evalContext, cache, budget);
   mlir::AsmState asmState(*module);
 
   module->walk([&](mlir::Operation *op) {

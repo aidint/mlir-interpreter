@@ -1,5 +1,4 @@
 #include "interpreter/Engine.h"
-#include "interpreter/EvalCache.h"
 #include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
 #include "mlir/IR/Matchers.h"
@@ -40,14 +39,11 @@ Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
 
 } // namespace
 
-Engine::Engine(EvalContext &ctx, uint64_t budget)
-    : ctx(ctx), budget(budget), answerAllocator(ctx, false) {}
-
 Answer Engine::query(Value value) {
   assert(!queryAllocator &&
          "cannot start a query while another query is active");
   remaining = budget;
-  ctx.getCache().beginQuery();
+  cache.beginQuery();
   answerAllocator.beginRetaining();
   queryAllocator.emplace(ctx, false);
   Answer answer = evaluate(value);
@@ -64,7 +60,7 @@ Answer Engine::queryNested(Value value) {
 
 Answer Engine::evaluate(Value value) {
   std::optional<EvalValue> cached;
-  if (ctx.getCache().lookup(value, cached))
+  if (cache.lookup(value, cached))
     return {cached ? AnswerKind::Known : AnswerKind::Unknown, cached};
 
   Answer unknown{AnswerKind::Unknown, std::nullopt};
@@ -107,14 +103,14 @@ Answer Engine::evaluate(Value value) {
     for (auto [opResult, answer] : llvm::zip(op->getResults(), results)) {
       if (answer.kind == AnswerKind::Known ||
           answer.kind == AnswerKind::Unknown)
-        ctx.getCache().insert(opResult, answer.value);
+        cache.insert(opResult, answer.value);
     }
   }
 
   Answer answer = results[result.getResultNumber()];
   if (cacheable && (answer.kind == AnswerKind::Known ||
                     answer.kind == AnswerKind::Unknown)) {
-    bool found = ctx.getCache().lookup(value, answer.value);
+    bool found = cache.lookup(value, answer.value);
     assert(found && "cacheable result was not inserted");
   }
   return answer;
