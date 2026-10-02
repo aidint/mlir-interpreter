@@ -59,10 +59,6 @@ Answer Engine::queryNested(Value value) {
 }
 
 Answer Engine::evaluate(Value value) {
-  std::optional<EvalValue> cached;
-  if (cache.lookup(value, cached))
-    return {cached ? AnswerKind::Known : AnswerKind::Unknown, cached};
-
   Answer unknown{AnswerKind::Unknown, std::nullopt};
   auto result = dyn_cast<OpResult>(value);
   if (!result)
@@ -73,6 +69,20 @@ Answer Engine::evaluate(Value value) {
   if (!evaluable && !op->hasTrait<OpTrait::ConstantLike>()) {
     LDBG() << "no evaluation function for '" << op->getName() << "'";
     return unknown;
+  }
+
+  bool cacheable = !evaluable || evaluable.isCacheable();
+  std::optional<llvm::hash_code> key;
+  if (cacheable) {
+    CacheResult cached = cache.lookup(op, *this);
+    if (auto *signal = std::get_if<AnswerKind>(&cached))
+      return {*signal, std::nullopt};
+    if (auto *entry = std::get_if<CacheEntry *>(&cached)) {
+      if (auto &answer = (*entry)->results[result.getResultNumber()])
+        return *answer;
+    } else {
+      key = std::get<llvm::hash_code>(cached);
+    }
   }
 
   SmallVector<std::optional<EvalValue>> operands;
@@ -88,7 +98,6 @@ Answer Engine::evaluate(Value value) {
     return {AnswerKind::Exhausted, std::nullopt};
   --remaining;
 
-  bool cacheable = !evaluable || evaluable.isCacheable();
   SmallVector<Answer> results;
   if (!evaluable) {
     results.push_back(evaluateConstant(op, *queryAllocator));
@@ -99,19 +108,19 @@ Answer Engine::evaluate(Value value) {
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
-  if (cacheable) {
-    for (auto [opResult, answer] : llvm::zip(op->getResults(), results)) {
-      if (answer.kind == AnswerKind::Known ||
-          answer.kind == AnswerKind::Unknown)
-        cache.insert(opResult, answer.value);
-    }
-  }
-
   Answer answer = results[result.getResultNumber()];
-  if (cacheable && (answer.kind == AnswerKind::Known ||
-                    answer.kind == AnswerKind::Unknown)) {
-    bool found = cache.lookup(value, answer.value);
-    assert(found && "cacheable result was not inserted");
+  if (cacheable && llvm::any_of(results, [](const Answer &result) {
+        return result.kind == AnswerKind::Known ||
+               result.kind == AnswerKind::Unknown;
+      })) {
+    auto inserted = key ? cache.insert(op, *key, results, *this)
+                        : cache.insert(op, results, *this);
+    if (auto *signal = std::get_if<AnswerKind>(&inserted))
+      return {*signal, std::nullopt};
+    auto &cached =
+        std::get<CacheEntry *>(inserted)->results[result.getResultNumber()];
+    if (cached)
+      return *cached;
   }
   return answer;
 }

@@ -62,6 +62,15 @@ public:
 
 struct SubIOpEval
     : EvaluableOpInterface::ExternalModel<SubIOpEval, arith::SubIOp> {
+  CacheKeyResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
+    return llvm::hash_value(op);
+  }
+
+  CacheKeyResult<bool> isEqual(Operation *op, Operation *other,
+                               Engine &) const {
+    return op == other;
+  }
+
   SmallVector<Answer> evaluate(Operation *,
                                ArrayRef<std::optional<EvalValue>> operands,
                                EvalScope &scope) const {

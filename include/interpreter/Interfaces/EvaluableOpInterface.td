@@ -12,6 +12,15 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
 
   let methods = [
     InterfaceMethod<
+      "Computes a stable cache hash, or returns Exhausted/NeedsOrder.",
+      "::mlir::interpreter::CacheKeyResult<::llvm::hash_code>", "getHash",
+      (ins "::mlir::interpreter::Engine &":$engine)>,
+    InterfaceMethod<
+      "Compares cache keys symmetrically; equal operations must hash equally. May return Exhausted/NeedsOrder.",
+      "::mlir::interpreter::CacheKeyResult<bool>", "isEqual",
+      (ins "::mlir::Operation *":$other,
+           "::mlir::interpreter::Engine &":$engine)>,
+    InterfaceMethod<
       "Returns one answer per result.",
       "::llvm::SmallVector<::mlir::interpreter::Answer>", "evaluate",
       (ins "::llvm::ArrayRef<::std::optional<::mlir::interpreter::EvalValue>>":$operands,

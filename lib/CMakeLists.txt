@@ -18,7 +18,7 @@ target_link_libraries(InterpreterInterfaces PUBLIC
   MLIRIR
   MLIRSupport)
 
-add_library(Interpreter Engine.cpp)
+add_library(Interpreter Engine.cpp EvalCache.cpp)
 
 target_link_libraries(Interpreter PUBLIC
   InterpreterInterfaces

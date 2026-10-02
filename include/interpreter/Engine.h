@@ -22,6 +22,7 @@ public:
   EvalContext &getContext() { return ctx; }
 
   Answer query(Value value);
+  Answer queryNested(Value value);
   FailureOr<func::FuncOp> specialize(func::CallOp call,
                                      ArrayRef<std::optional<EvalValue>> args);
 
@@ -29,7 +30,6 @@ private:
   friend class EvalScope;
 
   EvalValueStorageAllocator &getQueryAllocator() { return *queryAllocator; }
-  Answer queryNested(Value value);
   Answer evaluate(Value value);
 
   EvalContext &ctx;

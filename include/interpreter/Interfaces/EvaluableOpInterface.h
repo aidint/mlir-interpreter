@@ -9,9 +9,11 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <optional>
+#include <variant>
 
 namespace mlir::interpreter {
 
@@ -21,6 +23,8 @@ struct Answer {
   AnswerKind kind;
   std::optional<EvalValue> value;
 };
+
+template <typename T> using CacheKeyResult = std::variant<T, AnswerKind>;
 
 class Engine;
 
