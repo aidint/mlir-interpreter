@@ -26,15 +26,15 @@ namespace {
 Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
   Attribute attr;
   if (!matchPattern(op, m_Constant(&attr)))
-    return {AnswerKind::Unknown, std::nullopt};
+    return {EvalStatus::Completed, std::nullopt};
   auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
   if (!evaluable) {
     LDBG() << "no interpreter value for attribute " << attr;
-    return {AnswerKind::Unknown, std::nullopt};
+    return {EvalStatus::Completed, std::nullopt};
   }
   if (auto value = evaluable.toEvalValue(allocator))
-    return {AnswerKind::Known, std::move(value)};
-  return {AnswerKind::Unknown, std::nullopt};
+    return {EvalStatus::Completed, std::move(value)};
+  return {EvalStatus::Completed, std::nullopt};
 }
 
 } // namespace
@@ -47,8 +47,8 @@ Answer Engine::query(Value value) {
   answerAllocator.beginRetaining();
   queryAllocator.emplace(ctx, false);
   Answer answer = evaluate(value);
-  if (answer.value)
-    answer.value = answerAllocator.retain(*answer.value);
+  if (const auto &value = answer.getValue())
+    answer.value = answerAllocator.retain(*value);
   queryAllocator.reset();
   return answer;
 }
@@ -59,7 +59,7 @@ Answer Engine::queryNested(Value value) {
 }
 
 Answer Engine::evaluate(Value value) {
-  Answer unknown{AnswerKind::Unknown, std::nullopt};
+  Answer unknown{EvalStatus::Completed, std::nullopt};
   auto result = dyn_cast<OpResult>(value);
   if (!result)
     return unknown;
@@ -75,7 +75,7 @@ Answer Engine::evaluate(Value value) {
   std::optional<llvm::hash_code> key;
   if (cacheable) {
     CacheResult cached = cache.lookup(op, *this);
-    if (auto *signal = std::get_if<AnswerKind>(&cached))
+    if (auto *signal = std::get_if<EvalStatus>(&cached))
       return {*signal, std::nullopt};
     if (auto *entry = std::get_if<CacheEntry *>(&cached)) {
       if (auto &answer = (*entry)->results[result.getResultNumber()])
@@ -88,14 +88,13 @@ Answer Engine::evaluate(Value value) {
   SmallVector<std::optional<EvalValue>> operands;
   for (Value operand : op->getOperands()) {
     Answer answer = evaluate(operand);
-    if (answer.kind == AnswerKind::Exhausted ||
-        answer.kind == AnswerKind::NeedsOrder)
+    if (answer.status != EvalStatus::Completed)
       return answer;
     operands.push_back(std::move(answer.value));
   }
 
   if (remaining == 0)
-    return {AnswerKind::Exhausted, std::nullopt};
+    return {EvalStatus::Exhausted, std::nullopt};
   --remaining;
 
   SmallVector<Answer> results;
@@ -110,15 +109,14 @@ Answer Engine::evaluate(Value value) {
          "evaluation must return one answer per operation result");
   Answer answer = results[result.getResultNumber()];
   if (cacheable && llvm::any_of(results, [](const Answer &result) {
-        return result.kind == AnswerKind::Known ||
-               result.kind == AnswerKind::Unknown;
+        return result.status == EvalStatus::Completed;
       })) {
     auto inserted = key ? cache.insert(op, *key, results, *this)
                         : cache.insert(op, results, *this);
-    if (auto *signal = std::get_if<AnswerKind>(&inserted))
-      return {*signal, std::nullopt};
-    auto &cached =
-        std::get<CacheEntry *>(inserted)->results[result.getResultNumber()];
+    if (inserted.status != EvalStatus::Completed)
+      return {inserted.status, std::nullopt};
+    assert(inserted.getValue() && "completed insertion must provide an entry");
+    auto &cached = (*inserted.getValue())->results[result.getResultNumber()];
     if (cached)
       return *cached;
   }
@@ -130,18 +128,16 @@ Engine::specialize(func::CallOp call, ArrayRef<std::optional<EvalValue>> args) {
   return failure();
 }
 
-StringRef stringifyAnswerKind(AnswerKind kind) {
-  switch (kind) {
-  case AnswerKind::Known:
-    return "known";
-  case AnswerKind::Unknown:
-    return "unknown";
-  case AnswerKind::Exhausted:
+StringRef stringifyEvalStatus(EvalStatus status) {
+  switch (status) {
+  case EvalStatus::Completed:
+    return "completed";
+  case EvalStatus::Exhausted:
     return "exhausted";
-  case AnswerKind::NeedsOrder:
+  case EvalStatus::NeedsOrder:
     return "needs order";
   }
-  llvm_unreachable("unhandled AnswerKind");
+  llvm_unreachable("unhandled EvalStatus");
 }
 
 } // namespace mlir::interpreter

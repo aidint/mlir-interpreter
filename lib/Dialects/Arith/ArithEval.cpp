@@ -11,11 +11,11 @@ namespace mlir::interpreter {
 namespace {
 
 Answer known(EvalScope &scope, APInt value) {
-  return {AnswerKind::Known,
+  return {EvalStatus::Completed,
           IntEvalValue::get(scope.getAllocator(), std::move(value))};
 }
 
-Answer unknown() { return {AnswerKind::Unknown, std::nullopt}; }
+Answer unknown() { return {EvalStatus::Completed, std::nullopt}; }
 
 const APInt *getInt(const std::optional<EvalValue> &value) {
   return value ? &cast<IntEvalValue>(*value).getValue() : nullptr;
@@ -23,13 +23,12 @@ const APInt *getInt(const std::optional<EvalValue> &value) {
 
 struct AddIOpEval
     : EvaluableOpInterface::ExternalModel<AddIOpEval, arith::AddIOp> {
-  CacheKeyResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
-    return llvm::hash_value(op);
+  EvalResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
+    return {EvalStatus::Completed, llvm::hash_value(op)};
   }
 
-  CacheKeyResult<bool> isEqual(Operation *op, Operation *other,
-                               Engine &) const {
-    return op == other;
+  EvalResult<bool> isEqual(Operation *op, Operation *other, Engine &) const {
+    return {EvalStatus::Completed, op == other};
   }
 
   SmallVector<Answer> evaluate(Operation *,
@@ -45,13 +44,12 @@ struct AddIOpEval
 
 struct MulIOpEval
     : EvaluableOpInterface::ExternalModel<MulIOpEval, arith::MulIOp> {
-  CacheKeyResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
-    return llvm::hash_value(op);
+  EvalResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
+    return {EvalStatus::Completed, llvm::hash_value(op)};
   }
 
-  CacheKeyResult<bool> isEqual(Operation *op, Operation *other,
-                               Engine &) const {
-    return op == other;
+  EvalResult<bool> isEqual(Operation *op, Operation *other, Engine &) const {
+    return {EvalStatus::Completed, op == other};
   }
 
   SmallVector<Answer> evaluate(Operation *,

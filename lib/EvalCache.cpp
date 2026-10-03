@@ -1,25 +1,27 @@
 #include "interpreter/EvalCache.h"
+#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include <cassert>
 
 namespace mlir::interpreter {
 namespace {
 
-CacheKeyResult<llvm::hash_code> getHash(Operation *op, Engine &engine) {
+EvalResult<llvm::hash_code> getHash(Operation *op, Engine &engine) {
   if (auto evaluable = dyn_cast<EvaluableOpInterface>(op))
     return evaluable.getHash(engine);
-  return llvm::hash_value(op);
+  return {EvalStatus::Completed, llvm::hash_value(op)};
 }
 
-AnswerKind checkedSignal(AnswerKind kind) {
-  assert((kind == AnswerKind::Exhausted || kind == AnswerKind::NeedsOrder) &&
-         "cache key methods may only signal exhaustion or needs order");
-  return kind;
+EvalStatus checkedSignal(EvalStatus status) {
+  assert(
+      (status == EvalStatus::Exhausted || status == EvalStatus::NeedsOrder) &&
+      "cache key methods may only signal exhaustion or needs order");
+  return status;
 }
 
 }
 
-CacheKeyResult<CacheEntry *>
+EvalResult<CacheEntry *>
 EvalCache::findEquivalent(Operation *op, llvm::hash_code key, Engine &engine) {
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
   size_t checked = 0;
@@ -28,22 +30,24 @@ EvalCache::findEquivalent(Operation *op, llvm::hash_code key, Engine &engine) {
     {
       auto it = entries.find(key);
       if (it == entries.end() || it->second.size() == checked)
-        return static_cast<CacheEntry *>(nullptr);
+        return {EvalStatus::Completed, std::nullopt};
       candidates.append(it->second.begin() + checked, it->second.end());
       checked = it->second.size();
     }
     for (CacheEntry *entry : candidates) {
       if (entry->op == op)
-        return entry;
+        return {EvalStatus::Completed, entry};
       if (!evaluable)
         continue;
       auto equal = evaluable.isEqual(entry->op, engine);
-      if (auto *signal = std::get_if<AnswerKind>(&equal))
-        return checkedSignal(*signal);
-      if (std::get<bool>(equal)) {
+      const auto &isEqual = equal.getValue();
+      if (equal.status != EvalStatus::Completed)
+        return {checkedSignal(equal.status), std::nullopt};
+      assert(isEqual && "completed equality must provide a result");
+      if (*isEqual) {
         assert(entry->results.size() == op->getNumResults() &&
                "equivalent operations must have matching result counts");
-        return entry;
+        return {EvalStatus::Completed, entry};
       }
     }
   }
@@ -51,35 +55,38 @@ EvalCache::findEquivalent(Operation *op, llvm::hash_code key, Engine &engine) {
 
 CacheResult EvalCache::lookup(Operation *op, Engine &engine) {
   auto hash = getHash(op, engine);
-  if (auto *signal = std::get_if<AnswerKind>(&hash))
-    return checkedSignal(*signal);
-  auto key = std::get<llvm::hash_code>(hash);
+  const auto &hashValue = hash.getValue();
+  if (hash.status != EvalStatus::Completed)
+    return checkedSignal(hash.status);
+  assert(hashValue && "completed hashing must provide a hash");
+  auto key = *hashValue;
   auto found = findEquivalent(op, key, engine);
-  if (auto *signal = std::get_if<AnswerKind>(&found))
-    return *signal;
-  if (CacheEntry *entry = std::get<CacheEntry *>(found))
-    return entry;
+  if (found.status != EvalStatus::Completed)
+    return found.status;
+  if (const auto &entry = found.getValue())
+    return *entry;
   return key;
 }
 
-CacheKeyResult<CacheEntry *>
+EvalResult<CacheEntry *>
 EvalCache::insert(Operation *op, ArrayRef<Answer> answers, Engine &engine) {
   auto hash = getHash(op, engine);
-  if (auto *signal = std::get_if<AnswerKind>(&hash))
-    return checkedSignal(*signal);
-  return insert(op, std::get<llvm::hash_code>(hash), answers, engine);
+  const auto &hashValue = hash.getValue();
+  if (hash.status != EvalStatus::Completed)
+    return {checkedSignal(hash.status), std::nullopt};
+  assert(hashValue && "completed hashing must provide a hash");
+  return insert(op, *hashValue, answers, engine);
 }
 
-CacheKeyResult<CacheEntry *> EvalCache::insert(Operation *op,
-                                               llvm::hash_code key,
-                                               ArrayRef<Answer> answers,
-                                               Engine &engine) {
+EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
+                                           ArrayRef<Answer> answers,
+                                           Engine &engine) {
   assert(answers.size() == op->getNumResults() &&
          "cache insertion requires one answer per result");
   auto found = findEquivalent(op, key, engine);
-  if (std::holds_alternative<AnswerKind>(found))
+  if (found.status != EvalStatus::Completed)
     return found;
-  CacheEntry *entry = std::get<CacheEntry *>(found);
+  CacheEntry *entry = found.getValue().value_or(nullptr);
   if (!entry) {
     auto owned = std::make_unique<CacheEntry>();
     owned->op = op;
@@ -89,17 +96,16 @@ CacheKeyResult<CacheEntry *> EvalCache::insert(Operation *op,
     entries[key].push_back(entry);
   }
   for (auto [slot, answer] : llvm::zip(entry->results, answers)) {
-    if (slot || (answer.kind != AnswerKind::Known &&
-                 answer.kind != AnswerKind::Unknown))
+    assert((answer.status == EvalStatus::Completed || !answer.value) &&
+           "incomplete evaluations cannot have a value");
+    if (slot || answer.status != EvalStatus::Completed)
       continue;
-    assert((answer.kind == AnswerKind::Known) == answer.value.has_value() &&
-           "only known answers have values");
     Answer retained = answer;
-    if (retained.value)
-      retained.value = allocator.retain(*retained.value);
+    if (const auto &value = answer.getValue())
+      retained.value = allocator.retain(*value);
     slot = retained;
   }
-  return entry;
+  return {EvalStatus::Completed, entry};
 }
 
 }

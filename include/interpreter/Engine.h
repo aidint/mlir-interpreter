@@ -40,7 +40,7 @@ private:
   std::optional<EvalValueStorageAllocator> queryAllocator;
 };
 
-StringRef stringifyAnswerKind(AnswerKind kind);
+StringRef stringifyEvalStatus(EvalStatus status);
 
 } // namespace mlir::interpreter
 

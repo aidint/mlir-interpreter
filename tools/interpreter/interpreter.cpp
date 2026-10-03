@@ -78,14 +78,17 @@ int main(int argc, char **argv) {
       mlir::interpreter::Answer answer = engine.query(result);
       result.printAsOperand(llvm::outs(), asmState);
       llvm::outs() << " -> ";
-      auto value =
-          answer.value
-              ? llvm::dyn_cast<mlir::interpreter::IntEvalValue>(*answer.value)
-              : mlir::interpreter::IntEvalValue();
-      if (value)
-        llvm::outs() << value.getValue();
-      else
-        llvm::outs() << mlir::interpreter::stringifyAnswerKind(answer.kind);
+      if (const auto &value = answer.getValue()) {
+        if (auto integer =
+                llvm::dyn_cast<mlir::interpreter::IntEvalValue>(*value))
+          llvm::outs() << integer.getValue();
+        else
+          llvm::outs() << "known";
+      } else if (answer.status == mlir::interpreter::EvalStatus::Completed) {
+        llvm::outs() << "unknown";
+      } else {
+        llvm::outs() << mlir::interpreter::stringifyEvalStatus(answer.status);
+      }
       llvm::outs() << "\n";
     }
   });

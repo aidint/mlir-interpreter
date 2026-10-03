@@ -2,26 +2,33 @@
 #define INTERPRETER_EVALCACHE_H
 
 #include "interpreter/EvalContext.h"
-#include "interpreter/EvalValue.h"
+#include "interpreter/EvalResult.h"
 #include "interpreter/EvalValueStorageAllocator.h"
-#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
-#include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <memory>
 #include <optional>
+#include <variant>
+
+namespace mlir {
+class Operation;
+}
 
 namespace mlir::interpreter {
+
+class Engine;
 
 struct CacheEntry {
   Operation *op;
   SmallVector<std::optional<Answer>> results;
 };
 
-using CacheResult = std::variant<CacheEntry *, llvm::hash_code, AnswerKind>;
+using CacheResult = std::variant<CacheEntry *, llvm::hash_code, EvalStatus>;
 
 class EvalCache {
 public:
@@ -35,14 +42,14 @@ public:
   }
 
   CacheResult lookup(Operation *op, Engine &engine);
-  CacheKeyResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
-                                      Engine &engine);
-  CacheKeyResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
-                                      ArrayRef<Answer> answers, Engine &engine);
+  EvalResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
+                                  Engine &engine);
+  EvalResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
+                                  ArrayRef<Answer> answers, Engine &engine);
 
 private:
-  CacheKeyResult<CacheEntry *>
-  findEquivalent(Operation *op, llvm::hash_code key, Engine &engine);
+  EvalResult<CacheEntry *> findEquivalent(Operation *op, llvm::hash_code key,
+                                          Engine &engine);
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;
