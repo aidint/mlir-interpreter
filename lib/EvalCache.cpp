@@ -2,6 +2,7 @@
 #include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include <cassert>
+#include <memory>
 
 namespace mlir::interpreter {
 namespace {
@@ -87,11 +88,11 @@ EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
     return found;
   CacheEntry *entry = found.getValue().value_or(nullptr);
   if (!entry) {
-    auto owned = std::make_unique<CacheEntry>();
-    owned->op = op;
-    owned->results.resize(answers.size());
-    entry = owned.get();
-    ownedEntries.push_back(std::move(owned));
+    auto *results =
+        entryAllocator.Allocate<std::optional<Answer>>(answers.size());
+    std::uninitialized_fill_n(results, answers.size(), std::nullopt);
+    entry = new (entryAllocator.Allocate<CacheEntry>())
+        CacheEntry{op, {results, answers.size()}};
     entries[key].push_back(entry);
   }
   fill(entry, answers);

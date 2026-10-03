@@ -10,9 +10,10 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Allocator.h"
 
-#include <memory>
 #include <optional>
+#include <type_traits>
 
 namespace mlir {
 class Operation;
@@ -24,8 +25,11 @@ class Engine;
 
 struct CacheEntry {
   Operation *op;
-  SmallVector<std::optional<Answer>> results;
+  MutableArrayRef<std::optional<Answer>> results;
 };
+
+static_assert(std::is_trivially_destructible_v<CacheEntry>,
+              "cache entries are bump allocated and never destroyed");
 
 struct CacheLookup {
   llvm::hash_code key;
@@ -39,7 +43,7 @@ public:
   void beginQuery() { allocator.beginRetaining(); }
   void clear() {
     entries.clear();
-    ownedEntries.clear();
+    entryAllocator.Reset();
     allocator.beginRetaining();
   }
 
@@ -56,7 +60,7 @@ private:
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;
-  SmallVector<std::unique_ptr<CacheEntry>> ownedEntries;
+  llvm::BumpPtrAllocator entryAllocator;
 };
 
 } // namespace mlir::interpreter
