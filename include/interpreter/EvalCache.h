@@ -13,7 +13,6 @@
 
 #include <memory>
 #include <optional>
-#include <variant>
 
 namespace mlir {
 class Operation;
@@ -28,7 +27,10 @@ struct CacheEntry {
   SmallVector<std::optional<Answer>> results;
 };
 
-using CacheResult = std::variant<CacheEntry *, llvm::hash_code, EvalStatus>;
+struct CacheLookup {
+  llvm::hash_code key;
+  CacheEntry *entry;
+};
 
 class EvalCache {
 public:
@@ -41,11 +43,12 @@ public:
     allocator.beginRetaining();
   }
 
-  CacheResult lookup(Operation *op, Engine &engine);
+  EvalResult<CacheLookup> lookup(Operation *op, Engine &engine);
   EvalResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
                                   Engine &engine);
   EvalResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
                                   ArrayRef<Answer> answers, Engine &engine);
+  void fill(CacheEntry *entry, ArrayRef<Answer> answers);
 
 private:
   EvalResult<CacheEntry *> findEquivalent(Operation *op, llvm::hash_code key,

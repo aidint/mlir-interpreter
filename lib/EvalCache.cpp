@@ -53,19 +53,18 @@ EvalCache::findEquivalent(Operation *op, llvm::hash_code key, Engine &engine) {
   }
 }
 
-CacheResult EvalCache::lookup(Operation *op, Engine &engine) {
+EvalResult<CacheLookup> EvalCache::lookup(Operation *op, Engine &engine) {
   auto hash = getHash(op, engine);
   const auto &hashValue = hash.getValue();
   if (hash.status != EvalStatus::Completed)
-    return checkedSignal(hash.status);
+    return {checkedSignal(hash.status), std::nullopt};
   assert(hashValue && "completed hashing must provide a hash");
   auto key = *hashValue;
   auto found = findEquivalent(op, key, engine);
   if (found.status != EvalStatus::Completed)
-    return found.status;
-  if (const auto &entry = found.getValue())
-    return *entry;
-  return key;
+    return {found.status, std::nullopt};
+  return {EvalStatus::Completed,
+          CacheLookup{key, found.getValue().value_or(nullptr)}};
 }
 
 EvalResult<CacheEntry *>
@@ -95,6 +94,13 @@ EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
     ownedEntries.push_back(std::move(owned));
     entries[key].push_back(entry);
   }
+  fill(entry, answers);
+  return {EvalStatus::Completed, entry};
+}
+
+void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
+  assert(answers.size() == entry->results.size() &&
+         "cache filling requires one answer per result");
   for (auto [slot, answer] : llvm::zip(entry->results, answers)) {
     assert((answer.status == EvalStatus::Completed || !answer.value) &&
            "incomplete evaluations cannot have a value");
@@ -105,7 +111,6 @@ EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
       retained.value = allocator.retain(*value);
     slot = retained;
   }
-  return {EvalStatus::Completed, entry};
 }
 
 }

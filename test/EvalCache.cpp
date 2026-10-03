@@ -229,8 +229,7 @@ void testPartialResultsAndLifetime() {
     Answer exhausted = engine.query(op->getResult(2));
     CHECK(exhausted.status == EvalStatus::Exhausted);
     CHECK(!exhausted.getValue());
-    auto found = f.cache.lookup(op, engine);
-    auto *entry = std::get<CacheEntry *>(found);
+    auto *entry = f.cache.lookup(op, engine).getValue()->entry;
     CHECK(entry->results.size() == 3);
     CHECK(entry->results[0] && isInteger(*entry->results[0], 5));
     CHECK(entry->results[1] && isUnknown(*entry->results[1]));
@@ -246,9 +245,29 @@ void testPartialResultsAndLifetime() {
     CHECK(isInteger(*entry->results[2], 13));
     CHECK(first.getValue()->isCached());
     f.cache.clear();
-    CHECK(std::holds_alternative<llvm::hash_code>(f.cache.lookup(op, engine)));
+    CHECK(!f.cache.lookup(op, engine).getValue()->entry);
   }
   CHECK(isInteger(first, 5));
+}
+
+void testPartialHitFillsWithoutSearching() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1);
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key);
+  SmallVector<Answer> pending{{EvalStatus::NeedsOrder, std::nullopt}};
+  CacheEntry *entry =
+      f.cache.insert(candidate, key, pending, engine).getValue().value();
+  Operation *op = f.hashedOp(key);
+  unsigned comparisons = 0;
+  behaviors.at(op).equal = [&](Operation *, Operation *other, Engine &) {
+    ++comparisons;
+    return EvalResult<bool>{EvalStatus::Completed, other == candidate};
+  };
+  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+  CHECK(behaviors.at(op).hashes == 1);
+  CHECK(comparisons == 1);
+  CHECK(isInteger(*entry->results[0], 7));
 }
 
 void testPreparedHashAndPromotion() {
@@ -256,7 +275,7 @@ void testPreparedHashAndPromotion() {
   Engine engine(f.evalContext, f.cache, 0);
   Operation *op = f.op(3);
   auto result = f.cache.lookup(op, engine);
-  CHECK(std::holds_alternative<llvm::hash_code>(result));
+  CHECK(!result.getValue()->entry);
   CHECK(behaviors.at(op).hashes == 1);
   CacheEntry *entry;
   {
@@ -264,8 +283,7 @@ void testPreparedHashAndPromotion() {
     SmallVector<Answer> answers{integer(transient, 42),
                                 {EvalStatus::NeedsOrder, std::nullopt},
                                 {EvalStatus::Exhausted, std::nullopt}};
-    auto inserted =
-        f.cache.insert(op, std::get<llvm::hash_code>(result), answers, engine);
+    auto inserted = f.cache.insert(op, result.getValue()->key, answers, engine);
     CHECK(behaviors.at(op).hashes == 1);
     entry = inserted.getValue().value();
     CHECK(entry->results[0]->getValue()->getImpl() !=
@@ -291,7 +309,7 @@ void testSignalsAndOptOut() {
                                      Engine &) -> EvalResult<llvm::hash_code> {
       return {signal, std::nullopt};
     };
-    CHECK(std::get<EvalStatus>(f.cache.lookup(op, engine)) == signal);
+    CHECK(f.cache.lookup(op, engine).status == signal);
     SmallVector<Answer> answers{{EvalStatus::Completed, std::nullopt}};
     CHECK(f.cache.insert(op, answers, engine).status == signal);
     Answer hashFailure = engine.query(op->getResult(0));
@@ -309,7 +327,7 @@ void testSignalsAndOptOut() {
                                       Engine &) -> EvalResult<bool> {
       return {signal, std::nullopt};
     };
-    CHECK(std::get<EvalStatus>(f.cache.lookup(op, engine)) == signal);
+    CHECK(f.cache.lookup(op, engine).status == signal);
     CHECK(f.cache.insert(op, key, answers, engine).status == signal);
     Answer equalityFailure = engine.query(op->getResult(0));
     CHECK(equalityFailure.status == signal);
@@ -356,7 +374,7 @@ void testNestedInsertion(bool inserting) {
   if (inserting)
     found = f.cache.insert(query, key, unknown, engine).getValue().value();
   else
-    found = std::get<CacheEntry *>(f.cache.lookup(query, engine));
+    found = f.cache.lookup(query, engine).getValue()->entry;
   CHECK(populated);
   CHECK(found == nestedEntry);
   CHECK(found->op == equivalent);
@@ -385,7 +403,7 @@ void testInsertionAfterEvaluation() {
   };
   CHECK(isInteger(engine.query(op->getResult(0)), 7));
   CHECK(behaviors.at(op).hashes == 1);
-  CHECK(std::get<CacheEntry *>(f.cache.lookup(op, engine)) == nestedEntry);
+  CHECK(f.cache.lookup(op, engine).getValue()->entry == nestedEntry);
 }
 
 }
@@ -394,6 +412,7 @@ int main() {
   testSemanticReuseAndBudget();
   testZeroHashCollision();
   testPartialResultsAndLifetime();
+  testPartialHitFillsWithoutSearching();
   testPreparedHashAndPromotion();
   testSignalsAndOptOut();
   testNestedInsertion(false);

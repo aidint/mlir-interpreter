@@ -72,17 +72,19 @@ Answer Engine::evaluate(Value value) {
   }
 
   bool cacheable = !evaluable || evaluable.isCacheable();
-  std::optional<llvm::hash_code> key;
+  llvm::hash_code key;
+  CacheEntry *hit = nullptr;
   if (cacheable) {
-    CacheResult cached = cache.lookup(op, *this);
-    if (auto *signal = std::get_if<EvalStatus>(&cached))
-      return {*signal, std::nullopt};
-    if (auto *entry = std::get_if<CacheEntry *>(&cached)) {
-      if (auto &answer = (*entry)->results[result.getResultNumber()])
+    auto cached = cache.lookup(op, *this);
+    if (cached.status != EvalStatus::Completed)
+      return {cached.status, std::nullopt};
+    assert(cached.getValue() && "completed lookup must provide a key");
+    auto [hash, entry] = *cached.getValue();
+    if (entry)
+      if (auto &answer = entry->results[result.getResultNumber()])
         return *answer;
-    } else {
-      key = std::get<llvm::hash_code>(cached);
-    }
+    key = hash;
+    hit = entry;
   }
 
   SmallVector<std::optional<EvalValue>> operands;
@@ -111,13 +113,18 @@ Answer Engine::evaluate(Value value) {
   if (cacheable && llvm::any_of(results, [](const Answer &result) {
         return result.status == EvalStatus::Completed;
       })) {
-    auto inserted = key ? cache.insert(op, *key, results, *this)
-                        : cache.insert(op, results, *this);
-    if (inserted.status != EvalStatus::Completed)
-      return {inserted.status, std::nullopt};
-    assert(inserted.getValue() && "completed insertion must provide an entry");
-    auto &cached = (*inserted.getValue())->results[result.getResultNumber()];
-    if (cached)
+    CacheEntry *entry = hit;
+    if (entry) {
+      cache.fill(entry, results);
+    } else {
+      auto inserted = cache.insert(op, key, results, *this);
+      if (inserted.status != EvalStatus::Completed)
+        return {inserted.status, std::nullopt};
+      assert(inserted.getValue() &&
+             "completed insertion must provide an entry");
+      entry = *inserted.getValue();
+    }
+    if (auto &cached = entry->results[result.getResultNumber()])
       return *cached;
   }
   return answer;
