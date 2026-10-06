@@ -11,11 +11,11 @@ namespace mlir::interpreter {
 namespace {
 
 Answer known(EvalScope &scope, APInt value) {
-  return {AnswerKind::Known,
+  return {EvalStatus::Completed,
           IntEvalValue::get(scope.getAllocator(), std::move(value))};
 }
 
-Answer unknown() { return {AnswerKind::Unknown, std::nullopt}; }
+Answer unknown() { return {EvalStatus::Completed, std::nullopt}; }
 
 const APInt *getInt(const std::optional<EvalValue> &value) {
   return value ? &cast<IntEvalValue>(*value).getValue() : nullptr;

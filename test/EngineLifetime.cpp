@@ -66,10 +66,10 @@ struct SubIOpEval
                                ArrayRef<std::optional<EvalValue>> operands,
                                EvalScope &scope) const {
     if (!operands[0] || !operands[1])
-      return {{AnswerKind::Unknown, std::nullopt}};
+      return {{EvalStatus::Completed, std::nullopt}};
     const APInt &lhs = cast<IntEvalValue>(*operands[0]).getValue();
     const APInt &rhs = cast<IntEvalValue>(*operands[1]).getValue();
-    return {{AnswerKind::Known,
+    return {{EvalStatus::Completed,
              TrackedEvalValue::get(scope.getAllocator(), lhs - rhs)}};
   }
 
@@ -89,9 +89,10 @@ func.func @f() -> (i32, i32) {
 )mlir";
 
 const APInt *getTracked(const Answer &answer) {
-  if (!answer.value || !*answer.value)
+  const auto &value = answer.getValue();
+  if (!value || !*value)
     return nullptr;
-  auto tracked = dyn_cast<TrackedEvalValue>(*answer.value);
+  auto tracked = dyn_cast<TrackedEvalValue>(*value);
   return tracked ? &tracked.getValue() : nullptr;
 }
 
@@ -136,28 +137,28 @@ int main() {
     Engine engine(evalContext, cache, 100);
 
     Answer first = engine.query(uncached[0]);
-    CHECK(first.kind == AnswerKind::Known);
-    CHECK(first.value && !first.value->isCached());
+    CHECK(first.status == EvalStatus::Completed);
+    CHECK(first.getValue() && !first.getValue()->isCached());
     CHECK(getTracked(first) && *getTracked(first) == 5);
     CHECK(liveTracked == 1);
 
     Answer second = engine.query(uncached[1]);
-    CHECK(second.kind == AnswerKind::Known);
+    CHECK(second.status == EvalStatus::Completed);
     CHECK(getTracked(second) && *getTracked(second) == 6);
     CHECK(liveTracked == 2);
 
     CHECK(getTracked(first) && *getTracked(first) == 5);
-    CHECK(first.value->getImpl() != second.value->getImpl());
+    CHECK(first.getValue()->getImpl() != second.getValue()->getImpl());
 
     Answer constant = engine.query(constants[0]);
-    CHECK(constant.kind == AnswerKind::Known);
-    CHECK(constant.value && constant.value->isCached());
-    CHECK(cast<IntEvalValue>(*constant.value).getValue() == 7);
+    CHECK(constant.status == EvalStatus::Completed);
+    CHECK(constant.getValue() && !constant.getValue()->isCached());
+    CHECK(cast<IntEvalValue>(*constant.getValue()).getValue() == 7);
     CHECK(liveTracked == 2);
 
     Answer again = engine.query(uncached[0]);
     CHECK(getTracked(again) && *getTracked(again) == 5);
-    CHECK(again.value->getImpl() != first.value->getImpl());
+    CHECK(again.getValue()->getImpl() != first.getValue()->getImpl());
     CHECK(liveTracked == 3);
   }
   CHECK(liveTracked == 0);

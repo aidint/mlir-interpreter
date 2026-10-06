@@ -1,7 +1,7 @@
 #ifndef INTERPRETER_EVALUABLEOPINTERFACE_H
 #define INTERPRETER_EVALUABLEOPINTERFACE_H
 
-#include "interpreter/EvalValue.h"
+#include "interpreter/EvalResult.h"
 #include "interpreter/EvalValueStorageAllocator.h"
 
 #include "mlir/IR/OpDefinition.h"
@@ -9,18 +9,12 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <optional>
 
 namespace mlir::interpreter {
-
-enum class AnswerKind { Known, Unknown, Exhausted, NeedsOrder };
-
-struct Answer {
-  AnswerKind kind;
-  std::optional<EvalValue> value;
-};
 
 class Engine;
 
