@@ -51,6 +51,7 @@ Answer Engine::query(Value value) {
   if (const auto &value = answer.getValue())
     answer.value = answerAllocator.retain(*value);
   queryAllocator.reset();
+  queryAnswers.clear();
   return answer;
 }
 
@@ -60,6 +61,15 @@ Answer Engine::queryNested(Value value) {
 }
 
 Answer Engine::evaluate(Value value) {
+  if (auto it = queryAnswers.find(value); it != queryAnswers.end())
+    return it->second;
+  Answer answer = compute(value);
+  if (answer.status == EvalStatus::Completed)
+    queryAnswers.try_emplace(value, answer);
+  return answer;
+}
+
+Answer Engine::compute(Value value) {
   Answer unknown{EvalStatus::Completed, std::nullopt};
   auto result = dyn_cast<OpResult>(value);
   if (!result)
@@ -112,19 +122,32 @@ Answer Engine::evaluate(Value value) {
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
-  Answer answer = results[result.getResultNumber()];
+  CacheEntry *entry = nullptr;
   if (cached && llvm::any_of(results, [](const Answer &result) {
         return result.status == EvalStatus::Completed;
       })) {
-    CacheEntry *entry = cached->entry;
+    entry = cached->entry;
     if (entry)
       cache.fill(entry, results);
     else
       entry = cache.insert(op, *cached, results, scope);
-    if (auto &slot = entry->results[result.getResultNumber()])
-      return *slot;
   }
-  return answer;
+
+  // Siblings were computed too; record them so querying one later in this
+  // query doesn't evaluate `op` again.
+  for (auto [i, computed] : llvm::enumerate(results)) {
+    Answer sibling = computed;
+    if (entry)
+      if (const auto &slot = entry->results[i])
+        sibling = *slot;
+    if (sibling.status == EvalStatus::Completed)
+      queryAnswers.try_emplace(op->getResult(i), sibling);
+  }
+
+  if (entry)
+    if (const auto &slot = entry->results[result.getResultNumber()])
+      return *slot;
+  return results[result.getResultNumber()];
 }
 
 FailureOr<func::FuncOp>

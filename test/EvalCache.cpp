@@ -176,15 +176,19 @@ void testSemanticReuseAndBudget() {
   semanticKey(first);
   semanticKey(second);
 
-  Engine twoSteps(f.evalContext, f.cache, 2);
-  CHECK(twoSteps.query(first->getResult(0)).status == EvalStatus::Exhausted);
+  // `first` costs 2 steps: hashing evaluates its constant, which the operand
+  // loop then reuses, and evaluating `first` takes the second.
+  Engine oneStep(f.evalContext, f.cache, 1);
+  CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(first).evaluations == 0);
-
-  Engine threeSteps(f.evalContext, f.cache, 3);
-  CHECK(isInteger(threeSteps.query(first->getResult(0)), 7));
+  Engine twoSteps(f.evalContext, f.cache, 2);
+  CHECK(isInteger(twoSteps.query(first->getResult(0)), 7));
   CHECK(behaviors.at(first).evaluations == 1);
-  CHECK(twoSteps.query(second->getResult(0)).status == EvalStatus::Exhausted);
-  CHECK(isInteger(threeSteps.query(second->getResult(0)), 7));
+
+  // `second` also costs 2 steps: hashing evaluates its constant, and comparing
+  // with `first` evaluates `first`'s constant, then hits.
+  CHECK(oneStep.query(second->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(isInteger(twoSteps.query(second->getResult(0)), 7));
   CHECK(behaviors.at(second).evaluations == 0);
   CHECK(behaviors.at(first).evaluations == 1);
 }
@@ -539,6 +543,33 @@ void testCycleThroughOperands() {
   CHECK(isInteger(engine.query(y->getResult(0)), 7));
 }
 
+void testMemoizedOperand() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  Operation *n = f.op();
+  behaviors.at(n).cacheable = false;
+  Operation *a = f.op(1, n->getResult(0));
+  semanticKey(a);
+  // Hashing `a` and its operand loop share one evaluation of `n`.
+  CHECK(isInteger(engine.query(a->getResult(0)), 7));
+  CHECK(behaviors.at(n).evaluations == 1);
+  // The memo is per query, so hashing `a` again evaluates `n` again.
+  CHECK(isInteger(engine.query(a->getResult(0)), 7));
+  CHECK(behaviors.at(n).evaluations == 2);
+}
+
+void testMemoizedSiblings() {
+  Fixture f;
+  Operation *pair = f.op(2);
+  behaviors.at(pair).cacheable = false;
+  Operation *sum = f.op(1, {pair->getResult(0), pair->getResult(1)});
+  // One step for `pair` and one for `sum`: `pair`'s second result is recorded
+  // when its first is evaluated.
+  Engine twoSteps(f.evalContext, f.cache, 2);
+  CHECK(isInteger(twoSteps.query(sum->getResult(0)), 7));
+  CHECK(behaviors.at(pair).evaluations == 1);
+}
+
 }
 
 int main() {
@@ -557,6 +588,8 @@ int main() {
   testCycleThroughEquality();
   testCycleThroughHash();
   testCycleThroughOperands();
+  testMemoizedOperand();
+  testMemoizedSiblings();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include <cstdint>
@@ -32,7 +33,10 @@ private:
 
   EvalValueStorageAllocator &getQueryAllocator() { return *queryAllocator; }
   Answer queryNested(Value value);
+  /// Returns the answer for `value`, reusing one completed earlier in this
+  /// query.
   Answer evaluate(Value value);
+  Answer compute(Value value);
 
   EvalContext &ctx;
   EvalCache &cache;
@@ -42,6 +46,9 @@ private:
   std::optional<EvalValueStorageAllocator> queryAllocator;
   /// Operations being evaluated in the current query.
   llvm::SmallPtrSet<Operation *, 8> active;
+  /// Completed answers of the current query; cleared with the query allocator
+  /// their values may live in.
+  DenseMap<Value, Answer> queryAnswers;
 };
 
 StringRef stringifyEvalStatus(EvalStatus status);
