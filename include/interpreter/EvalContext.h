@@ -57,12 +57,15 @@ public:
     it->second->template attachInterface<Models...>();
   }
 
-  /// Returns the cache shared by every engine on this context. Cached values
-  /// live until the context dies, so answers borrowing them never dangle.
-  detail::EvalCache &getCache() { return *cache; }
   void clearCache();
 
 private:
+  friend class Engine;
+
+  /// Returns the cache shared by every engine on this context. Cached values
+  /// live until the context dies, so answers borrowing them never dangle.
+  detail::EvalCache &getCache() { return *cache; }
+
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
 
