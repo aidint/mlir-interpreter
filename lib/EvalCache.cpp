@@ -48,7 +48,11 @@ CacheEntry *EvalCache::insert(Operation *op, const CacheLookup &lookup,
                               ArrayRef<Answer> answers, EvalScope &scope) {
   assert(answers.size() == op->getNumResults() &&
          "cache insertion requires one answer per result");
-  // Evaluation can append candidates, including one equivalent to `op`.
+  // Evaluating `op` can run nested queries that cache an operation equivalent
+  // to it, so search again instead of adding a duplicate entry. `lookup`
+  // already compared the first `searched` candidates, and keys are stable, so
+  // only candidates appended since then can match. Comparing the others again
+  // would spend budget on `isEqual` calls whose answer is already known.
   size_t next = lookup.searched;
   CacheEntry *entry =
       findEquivalent(cast<EvaluableOpInterface>(op), lookup.key, next, scope);

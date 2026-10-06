@@ -46,9 +46,14 @@ struct CacheLookup {
   size_t searched;
 };
 
-/// This class represents the answers retained across queries, grouped by the
-/// hash of their operation's cache key. Only the engine uses it, inside a
-/// query, because retaining values relies on query-allocator addresses.
+/// This class represents the context cache: the answers operations completed,
+/// kept across queries. Like `EvalContext`, the client creates it once and
+/// passes it to every `Engine` evaluating the same IR, so an answer one query
+/// computes is reused by later queries and other engines. Entries are bucketed
+/// by `getHash` and matched with `isEqual`, so equivalent operations share one
+/// entry. Only `Engine` fills it, inside a query, because filling copies values
+/// out of the query allocator and dedups them by address, which is only valid
+/// while that query runs.
 class EvalCache {
 public:
   explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
