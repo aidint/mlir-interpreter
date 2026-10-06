@@ -19,6 +19,7 @@ class MLIRContext;
 namespace mlir::interpreter {
 
 class AbstractEvalValue;
+class EvalCache;
 class EvalValueStorageAllocator;
 
 namespace detail {
@@ -56,6 +57,11 @@ public:
     it->second->template attachInterface<Models...>();
   }
 
+  /// Returns the cache shared by every engine on this context. Cached values
+  /// live until the context dies, so answers borrowing them never dangle.
+  EvalCache &getCache() { return *cache; }
+  void clearCache();
+
 private:
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
@@ -80,6 +86,7 @@ private:
 
   MLIRContext *mlirContext;
   DenseMap<TypeID, std::unique_ptr<AbstractEvalValue>> abstractEvalValues;
+  std::unique_ptr<EvalCache> cache;
 };
 
 } // namespace mlir::interpreter

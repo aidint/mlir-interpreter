@@ -54,6 +54,11 @@ public:
     return allocate<StorageT>(storage->getAbstractEvalValue(), *storage);
   }
 
+  /// Returns `value` copied into this allocator, or `value` itself if it is
+  /// already cached. `value` must have been created under this allocator's
+  /// `EvalContext`; retaining a value from another context is undefined
+  /// behavior, since that context may die first and its `isCached()` bit
+  /// refers to a different cache.
   EvalValue retain(EvalValue value);
 
 private:

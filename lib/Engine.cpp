@@ -44,7 +44,7 @@ Answer Engine::query(Value value) {
   assert(!queryAllocator &&
          "cannot start a query while another query is active");
   remaining = budget;
-  cache.beginQuery();
+  ctx.getCache().beginQuery();
   answerAllocator.beginRetaining();
   queryAllocator.emplace(ctx, false);
   Answer answer = evaluate(value);
@@ -91,7 +91,7 @@ Answer Engine::compute(Value value) {
   EvalScope scope(*this);
   std::optional<CacheLookup> cached;
   if (evaluable && evaluable.isCacheable()) {
-    auto lookup = cache.lookup(op, scope);
+    auto lookup = ctx.getCache().lookup(op, scope);
     if (lookup.status != EvalStatus::Completed)
       return {lookup.status, std::nullopt};
     assert(lookup.getValue() && "completed lookup must provide a key");
@@ -128,9 +128,9 @@ Answer Engine::compute(Value value) {
       })) {
     entry = cached->entry;
     if (entry)
-      cache.fill(entry, results);
+      ctx.getCache().fill(entry, results);
     else
-      entry = cache.insert(op, *cached, results, scope);
+      entry = ctx.getCache().insert(op, *cached, results, scope);
   }
 
   // Siblings were computed too; record them so querying one later in this

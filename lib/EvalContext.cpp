@@ -1,12 +1,15 @@
 #include "interpreter/EvalContext.h"
+#include "interpreter/EvalCache.h"
 #include "interpreter/EvalValueSupport.h"
 
 namespace mlir::interpreter {
 
 EvalContext::EvalContext(MLIRContext *mlirContext)
-    : mlirContext(mlirContext) {}
+    : mlirContext(mlirContext), cache(new EvalCache(*this)) {}
 
 EvalContext::~EvalContext() = default;
+
+void EvalContext::clearCache() { cache->clear(); }
 
 void EvalContext::insertAbstractEvalValue(
     TypeID typeID, ::mlir::detail::InterfaceMap &&interfaceMap, CloneFn clone) {

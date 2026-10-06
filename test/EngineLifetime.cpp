@@ -2,7 +2,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/Engine.h"
-#include "interpreter/EvalCache.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValue.h"
 #include "interpreter/Interfaces/EvaluableOpInterface.h"
@@ -131,10 +130,9 @@ int main() {
   EvalContext evalContext(&context);
   registerBuiltinEvalValues(evalContext);
   evalContext.registerEvalValues<TrackedEvalValue>();
-  EvalCache cache(evalContext);
 
   {
-    Engine engine(evalContext, cache, 100);
+    Engine engine(evalContext, 100);
 
     Answer first = engine.query(uncached[0]);
     CHECK(first.status == EvalStatus::Completed);
@@ -163,7 +161,7 @@ int main() {
   }
   CHECK(liveTracked == 0);
 
-  cache.clear();
+  evalContext.clearCache();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
