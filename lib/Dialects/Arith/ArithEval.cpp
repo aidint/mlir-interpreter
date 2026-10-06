@@ -23,14 +23,6 @@ const APInt *getInt(const std::optional<EvalValue> &value) {
 
 struct AddIOpEval
     : EvaluableOpInterface::ExternalModel<AddIOpEval, arith::AddIOp> {
-  EvalResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
-    return {EvalStatus::Completed, llvm::hash_value(op)};
-  }
-
-  EvalResult<bool> isEqual(Operation *op, Operation *other, Engine &) const {
-    return {EvalStatus::Completed, op == other};
-  }
-
   SmallVector<Answer> evaluate(Operation *,
                                ArrayRef<std::optional<EvalValue>> operands,
                                EvalScope &scope) const {
@@ -44,14 +36,6 @@ struct AddIOpEval
 
 struct MulIOpEval
     : EvaluableOpInterface::ExternalModel<MulIOpEval, arith::MulIOp> {
-  EvalResult<llvm::hash_code> getHash(Operation *op, Engine &) const {
-    return {EvalStatus::Completed, llvm::hash_value(op)};
-  }
-
-  EvalResult<bool> isEqual(Operation *op, Operation *other, Engine &) const {
-    return {EvalStatus::Completed, op == other};
-  }
-
   SmallVector<Answer> evaluate(Operation *,
                                ArrayRef<std::optional<EvalValue>> operands,
                                EvalScope &scope) const {

@@ -71,11 +71,12 @@ Answer Engine::evaluate(Value value) {
     return unknown;
   }
 
+  EvalScope scope(*this);
   bool cacheable = evaluable && evaluable.isCacheable();
   llvm::hash_code key;
   CacheEntry *hit = nullptr;
   if (cacheable) {
-    auto cached = cache.lookup(op, *this);
+    auto cached = cache.lookup(op, scope);
     if (cached.status != EvalStatus::Completed)
       return {cached.status, std::nullopt};
     assert(cached.getValue() && "completed lookup must provide a key");
@@ -103,7 +104,6 @@ Answer Engine::evaluate(Value value) {
   if (!evaluable) {
     results.push_back(evaluateConstant(op, *queryAllocator));
   } else {
-    EvalScope scope(*this);
     results = evaluable.evaluate(operands, scope);
   }
 
@@ -117,7 +117,7 @@ Answer Engine::evaluate(Value value) {
     if (entry) {
       cache.fill(entry, results);
     } else {
-      auto inserted = cache.insert(op, key, results, *this);
+      auto inserted = cache.insert(op, key, results, scope);
       if (inserted.status != EvalStatus::Completed)
         return answer;
       assert(inserted.getValue() &&

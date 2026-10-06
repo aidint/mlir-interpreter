@@ -16,9 +16,9 @@ EvalStatus checkedSignal(EvalStatus status) {
 
 }
 
-EvalResult<CacheEntry *>
-EvalCache::findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
-                          Engine &engine) {
+EvalResult<CacheEntry *> EvalCache::findEquivalent(EvaluableOpInterface op,
+                                                   llvm::hash_code key,
+                                                   EvalScope &scope) {
   size_t checked = 0;
   while (true) {
     SmallVector<CacheEntry *> candidates;
@@ -32,7 +32,7 @@ EvalCache::findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
     for (CacheEntry *entry : candidates) {
       if (entry->op == op)
         return {EvalStatus::Completed, entry};
-      auto equal = op.isEqual(entry->op, engine);
+      auto equal = op.isEqual(entry->op, scope);
       const auto &isEqual = equal.getValue();
       if (equal.status != EvalStatus::Completed)
         return {checkedSignal(equal.status), std::nullopt};
@@ -46,15 +46,15 @@ EvalCache::findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
   }
 }
 
-EvalResult<CacheLookup> EvalCache::lookup(Operation *op, Engine &engine) {
+EvalResult<CacheLookup> EvalCache::lookup(Operation *op, EvalScope &scope) {
   auto evaluable = cast<EvaluableOpInterface>(op);
-  auto hash = evaluable.getHash(engine);
+  auto hash = evaluable.getHash(scope);
   const auto &hashValue = hash.getValue();
   if (hash.status != EvalStatus::Completed)
     return {checkedSignal(hash.status), std::nullopt};
   assert(hashValue && "completed hashing must provide a hash");
   auto key = *hashValue;
-  auto found = findEquivalent(evaluable, key, engine);
+  auto found = findEquivalent(evaluable, key, scope);
   if (found.status != EvalStatus::Completed)
     return {found.status, std::nullopt};
   return {EvalStatus::Completed,
@@ -62,21 +62,21 @@ EvalResult<CacheLookup> EvalCache::lookup(Operation *op, Engine &engine) {
 }
 
 EvalResult<CacheEntry *>
-EvalCache::insert(Operation *op, ArrayRef<Answer> answers, Engine &engine) {
-  auto hash = cast<EvaluableOpInterface>(op).getHash(engine);
+EvalCache::insert(Operation *op, ArrayRef<Answer> answers, EvalScope &scope) {
+  auto hash = cast<EvaluableOpInterface>(op).getHash(scope);
   const auto &hashValue = hash.getValue();
   if (hash.status != EvalStatus::Completed)
     return {checkedSignal(hash.status), std::nullopt};
   assert(hashValue && "completed hashing must provide a hash");
-  return insert(op, *hashValue, answers, engine);
+  return insert(op, *hashValue, answers, scope);
 }
 
 EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
                                            ArrayRef<Answer> answers,
-                                           Engine &engine) {
+                                           EvalScope &scope) {
   assert(answers.size() == op->getNumResults() &&
          "cache insertion requires one answer per result");
-  auto found = findEquivalent(cast<EvaluableOpInterface>(op), key, engine);
+  auto found = findEquivalent(cast<EvaluableOpInterface>(op), key, scope);
   if (found.status != EvalStatus::Completed)
     return found;
   CacheEntry *entry = found.getValue().value_or(nullptr);

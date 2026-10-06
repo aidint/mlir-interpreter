@@ -21,7 +21,7 @@ class Operation;
 
 namespace mlir::interpreter {
 
-class Engine;
+class EvalScope;
 class EvaluableOpInterface;
 
 struct CacheEntry {
@@ -52,18 +52,19 @@ public:
 
   /// Finds the entry for `op` or for an operation equivalent to it. `op` must
   /// implement `EvaluableOpInterface`.
-  EvalResult<CacheLookup> lookup(Operation *op, Engine &engine);
+  EvalResult<CacheLookup> lookup(Operation *op, EvalScope &scope);
   /// Fills the entry for `op` or for an equivalent operation, creating one if
   /// none exists. `op` must implement `EvaluableOpInterface`.
   EvalResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
-                                  Engine &engine);
+                                  EvalScope &scope);
   EvalResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
-                                  ArrayRef<Answer> answers, Engine &engine);
+                                  ArrayRef<Answer> answers, EvalScope &scope);
   void fill(CacheEntry *entry, ArrayRef<Answer> answers);
 
 private:
   EvalResult<CacheEntry *> findEquivalent(EvaluableOpInterface op,
-                                          llvm::hash_code key, Engine &engine);
+                                          llvm::hash_code key,
+                                          EvalScope &scope);
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;
