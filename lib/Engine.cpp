@@ -71,7 +71,7 @@ Answer Engine::evaluate(Value value) {
     return unknown;
   }
 
-  bool cacheable = !evaluable || evaluable.isCacheable();
+  bool cacheable = evaluable && evaluable.isCacheable();
   llvm::hash_code key;
   CacheEntry *hit = nullptr;
   if (cacheable) {
@@ -119,7 +119,7 @@ Answer Engine::evaluate(Value value) {
     } else {
       auto inserted = cache.insert(op, key, results, *this);
       if (inserted.status != EvalStatus::Completed)
-        return {inserted.status, std::nullopt};
+        return answer;
       assert(inserted.getValue() &&
              "completed insertion must provide an entry");
       entry = *inserted.getValue();

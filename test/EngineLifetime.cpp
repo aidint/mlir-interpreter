@@ -160,7 +160,7 @@ int main() {
 
     Answer constant = engine.query(constants[0]);
     CHECK(constant.status == EvalStatus::Completed);
-    CHECK(constant.getValue() && constant.getValue()->isCached());
+    CHECK(constant.getValue() && !constant.getValue()->isCached());
     CHECK(cast<IntEvalValue>(*constant.getValue()).getValue() == 7);
     CHECK(liveTracked == 2);
 

@@ -22,6 +22,7 @@ class Operation;
 namespace mlir::interpreter {
 
 class Engine;
+class EvaluableOpInterface;
 
 struct CacheEntry {
   Operation *op;
@@ -47,7 +48,11 @@ public:
     allocator.beginRetaining();
   }
 
+  /// Finds the entry for `op` or for an operation equivalent to it. `op` must
+  /// implement `EvaluableOpInterface`.
   EvalResult<CacheLookup> lookup(Operation *op, Engine &engine);
+  /// Fills the entry for `op` or for an equivalent operation, creating one if
+  /// none exists. `op` must implement `EvaluableOpInterface`.
   EvalResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
                                   Engine &engine);
   EvalResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
@@ -55,8 +60,8 @@ public:
   void fill(CacheEntry *entry, ArrayRef<Answer> answers);
 
 private:
-  EvalResult<CacheEntry *> findEquivalent(Operation *op, llvm::hash_code key,
-                                          Engine &engine);
+  EvalResult<CacheEntry *> findEquivalent(EvaluableOpInterface op,
+                                          llvm::hash_code key, Engine &engine);
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;

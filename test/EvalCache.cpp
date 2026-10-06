@@ -176,16 +176,16 @@ void testSemanticReuseAndBudget() {
   semanticKey(first);
   semanticKey(second);
 
-  Engine oneStep(f.evalContext, f.cache, 1);
-  CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
+  Engine twoSteps(f.evalContext, f.cache, 2);
+  CHECK(twoSteps.query(first->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(first).evaluations == 0);
-  CHECK(isInteger(oneStep.query(first->getResult(0)), 7));
-  CHECK(behaviors.at(first).evaluations == 1);
-  CHECK(isInteger(oneStep.query(second->getResult(0)), 7));
-  CHECK(behaviors.at(second).evaluations == 0);
 
-  Engine noSteps(f.evalContext, f.cache, 0);
-  CHECK(isInteger(noSteps.query(second->getResult(0)), 7));
+  Engine threeSteps(f.evalContext, f.cache, 3);
+  CHECK(isInteger(threeSteps.query(first->getResult(0)), 7));
+  CHECK(behaviors.at(first).evaluations == 1);
+  CHECK(twoSteps.query(second->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(isInteger(threeSteps.query(second->getResult(0)), 7));
+  CHECK(behaviors.at(second).evaluations == 0);
   CHECK(behaviors.at(first).evaluations == 1);
 }
 
@@ -380,6 +380,31 @@ void testNestedInsertion(bool inserting) {
   CHECK(found->op == equivalent);
 }
 
+void testInterruptedInsertionPreservesAnswer() {
+  for (EvalStatus signal : {EvalStatus::Exhausted, EvalStatus::NeedsOrder}) {
+    Fixture f;
+    Engine engine(f.evalContext, f.cache, 1);
+    auto key = llvm::hash_code(123);
+    Operation *candidate = f.hashedOp(key);
+    SmallVector<Answer> unknown{{EvalStatus::Completed, std::nullopt}};
+    f.cache.insert(candidate, key, unknown, engine);
+    Operation *op = f.hashedOp(key);
+    unsigned comparisons = 0;
+    behaviors.at(op).equal = [&](Operation *, Operation *, Engine &)
+        -> EvalResult<bool> {
+      ++comparisons;
+      if (behaviors.at(op).evaluations)
+        return {signal, std::nullopt};
+      return {EvalStatus::Completed, false};
+    };
+    Answer answer = engine.query(op->getResult(0));
+    CHECK(isInteger(answer, 7));
+    CHECK(answer.getValue() && !answer.getValue()->isCached());
+    CHECK(behaviors.at(op).evaluations == 1);
+    CHECK(comparisons == 2);
+  }
+}
+
 void testInsertionAfterEvaluation() {
   Fixture f;
   Engine engine(f.evalContext, f.cache, 10);
@@ -417,6 +442,7 @@ int main() {
   testSignalsAndOptOut();
   testNestedInsertion(false);
   testNestedInsertion(true);
+  testInterruptedInsertionPreservesAnswer();
   testInsertionAfterEvaluation();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
