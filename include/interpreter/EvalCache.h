@@ -29,8 +29,10 @@ struct CacheEntry {
   MutableArrayRef<std::optional<Answer>> results;
 };
 
-static_assert(std::is_trivially_destructible_v<CacheEntry>,
-              "cache entries are bump allocated and never destroyed");
+static_assert(std::is_trivially_destructible_v<CacheEntry> &&
+                  std::is_trivially_destructible_v<std::optional<Answer>>,
+              "cache entries and their result slots are bump allocated and "
+              "never destroyed");
 
 struct CacheLookup {
   llvm::hash_code key;
