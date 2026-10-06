@@ -12,6 +12,7 @@
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cassert>
 #include <optional>
 
 namespace mlir::interpreter {
@@ -31,6 +32,15 @@ public:
 private:
   Engine &engine;
 };
+
+/// Returns `signal`'s status for every result of `op`, so an evaluation
+/// function can propagate an operand's `Exhausted`, `NeedsOrder` or `Cycle`.
+inline SmallVector<Answer> propagateSignal(Operation *op,
+                                           const Answer &signal) {
+  assert(signal.status != EvalStatus::Completed && "only signals propagate");
+  return SmallVector<Answer>(op->getNumResults(),
+                             Answer{signal.status, std::nullopt});
+}
 
 } // namespace mlir::interpreter
 

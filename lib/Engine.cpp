@@ -101,14 +101,7 @@ Answer Engine::compute(Value value) {
         return *answer;
   }
 
-  SmallVector<std::optional<EvalValue>> operands;
-  for (Value operand : op->getOperands()) {
-    Answer answer = evaluate(operand);
-    if (answer.status != EvalStatus::Completed)
-      return answer;
-    operands.push_back(std::move(answer.value));
-  }
-
+  // The step is charged before `evaluate` queries the operands it needs.
   if (remaining == 0)
     return {EvalStatus::Exhausted, std::nullopt};
   --remaining;
@@ -117,7 +110,7 @@ Answer Engine::compute(Value value) {
   if (!evaluable) {
     results.push_back(evaluateConstant(op, *queryAllocator));
   } else {
-    results = evaluable.evaluate(operands, scope);
+    results = evaluable.evaluate(scope);
   }
 
   assert(results.size() == op->getNumResults() &&
