@@ -24,6 +24,9 @@ namespace mlir::interpreter {
 class EvalScope;
 class EvaluableOpInterface;
 
+/// This class represents the cached answers of an operation and of the
+/// operations equivalent to it, with one slot per result. An empty slot has no
+/// completed answer yet and can be filled later.
 struct CacheEntry {
   Operation *op;
   MutableArrayRef<std::optional<Answer>> results;
@@ -34,37 +37,46 @@ static_assert(std::is_trivially_destructible_v<CacheEntry> &&
               "cache entries and their result slots are bump allocated and "
               "never destroyed");
 
+/// This class represents the outcome of a cache lookup: the operation's key,
+/// the matching entry (null on a miss), and the number of candidates in the
+/// key's bucket that were already examined, so insertion can resume the search.
 struct CacheLookup {
   llvm::hash_code key;
   CacheEntry *entry;
+  size_t searched;
 };
 
+/// This class represents the answers retained across queries, grouped by the
+/// hash of their operation's cache key. Only the engine uses it, inside a
+/// query, because retaining values relies on query-allocator addresses.
 class EvalCache {
 public:
   explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
 
-  void beginQuery() { allocator.beginRetaining(); }
   void clear() {
     entries.clear();
     entryAllocator.Reset();
     allocator.beginRetaining();
   }
 
+private:
+  friend class Engine;
+
+  void beginQuery() { allocator.beginRetaining(); }
+
   /// Finds the entry for `op` or for an operation equivalent to it. `op` must
   /// implement `EvaluableOpInterface`.
   EvalResult<CacheLookup> lookup(Operation *op, EvalScope &scope);
   /// Fills the entry for `op` or for an equivalent operation, creating one if
-  /// none exists. `op` must implement `EvaluableOpInterface`.
-  EvalResult<CacheEntry *> insert(Operation *op, ArrayRef<Answer> answers,
-                                  EvalScope &scope);
-  EvalResult<CacheEntry *> insert(Operation *op, llvm::hash_code key,
-                                  ArrayRef<Answer> answers, EvalScope &scope);
+  /// none exists. Only candidates appended since `lookup` are compared.
+  CacheEntry *insert(Operation *op, const CacheLookup &lookup,
+                     ArrayRef<Answer> answers, EvalScope &scope);
   void fill(CacheEntry *entry, ArrayRef<Answer> answers);
-
-private:
-  EvalResult<CacheEntry *> findEquivalent(EvaluableOpInterface op,
-                                          llvm::hash_code key,
-                                          EvalScope &scope);
+  /// Returns the first entry in `key`'s bucket, starting at index `next`, that
+  /// belongs to `op` or to an operation equivalent to it. `next` is left at the
+  /// match, or at the bucket size on a miss.
+  CacheEntry *findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
+                             size_t &next, EvalScope &scope);
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;

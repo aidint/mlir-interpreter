@@ -5,44 +5,30 @@
 #include <memory>
 
 namespace mlir::interpreter {
-namespace {
 
-EvalStatus checkedSignal(EvalStatus status) {
-  assert(
-      (status == EvalStatus::Exhausted || status == EvalStatus::NeedsOrder) &&
-      "cache key methods may only signal exhaustion or needs order");
-  return status;
-}
-
-}
-
-EvalResult<CacheEntry *> EvalCache::findEquivalent(EvaluableOpInterface op,
-                                                   llvm::hash_code key,
-                                                   EvalScope &scope) {
-  size_t checked = 0;
-  while (true) {
-    SmallVector<CacheEntry *> candidates;
-    {
-      auto it = entries.find(key);
-      if (it == entries.end() || it->second.size() == checked)
-        return {EvalStatus::Completed, std::nullopt};
-      candidates.append(it->second.begin() + checked, it->second.end());
-      checked = it->second.size();
-    }
-    for (CacheEntry *entry : candidates) {
-      if (entry->op == op)
-        return {EvalStatus::Completed, entry};
-      auto equal = op.isEqual(entry->op, scope);
-      const auto &isEqual = equal.getValue();
-      if (equal.status != EvalStatus::Completed)
-        return {checkedSignal(equal.status), std::nullopt};
-      assert(isEqual && "completed equality must provide a result");
-      if (*isEqual) {
-        assert(entry->results.size() == op->getNumResults() &&
-               "equivalent operations must have matching result counts");
-        return {EvalStatus::Completed, entry};
-      }
-    }
+CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
+                                      llvm::hash_code key, size_t &next,
+                                      EvalScope &scope) {
+  for (;; ++next) {
+    // `isEqual` can run nested queries that insert into the map, so look the
+    // bucket up again on every step. Entries are only appended and their
+    // addresses are stable, so `next` stays valid.
+    auto it = entries.find(key);
+    if (it == entries.end() || next == it->second.size())
+      return nullptr;
+    CacheEntry *entry = it->second[next];
+    if (entry->op == op)
+      return entry;
+    if (entry->results.size() != op->getNumResults())
+      continue;
+    // A signal only means this candidate can't be compared now; another
+    // candidate, or evaluation, may still answer.
+    auto equal = op.isEqual(entry->op, scope);
+    if (equal.status != EvalStatus::Completed)
+      continue;
+    assert(equal.getValue() && "completed equality must provide a result");
+    if (*equal.getValue())
+      return entry;
   }
 }
 
@@ -51,45 +37,31 @@ EvalResult<CacheLookup> EvalCache::lookup(Operation *op, EvalScope &scope) {
   auto hash = evaluable.getHash(scope);
   const auto &hashValue = hash.getValue();
   if (hash.status != EvalStatus::Completed)
-    return {checkedSignal(hash.status), std::nullopt};
+    return {hash.status, std::nullopt};
   assert(hashValue && "completed hashing must provide a hash");
-  auto key = *hashValue;
-  auto found = findEquivalent(evaluable, key, scope);
-  if (found.status != EvalStatus::Completed)
-    return {found.status, std::nullopt};
-  return {EvalStatus::Completed,
-          CacheLookup{key, found.getValue().value_or(nullptr)}};
+  CacheLookup result{*hashValue, nullptr, 0};
+  result.entry = findEquivalent(evaluable, result.key, result.searched, scope);
+  return {EvalStatus::Completed, result};
 }
 
-EvalResult<CacheEntry *>
-EvalCache::insert(Operation *op, ArrayRef<Answer> answers, EvalScope &scope) {
-  auto hash = cast<EvaluableOpInterface>(op).getHash(scope);
-  const auto &hashValue = hash.getValue();
-  if (hash.status != EvalStatus::Completed)
-    return {checkedSignal(hash.status), std::nullopt};
-  assert(hashValue && "completed hashing must provide a hash");
-  return insert(op, *hashValue, answers, scope);
-}
-
-EvalResult<CacheEntry *> EvalCache::insert(Operation *op, llvm::hash_code key,
-                                           ArrayRef<Answer> answers,
-                                           EvalScope &scope) {
+CacheEntry *EvalCache::insert(Operation *op, const CacheLookup &lookup,
+                              ArrayRef<Answer> answers, EvalScope &scope) {
   assert(answers.size() == op->getNumResults() &&
          "cache insertion requires one answer per result");
-  auto found = findEquivalent(cast<EvaluableOpInterface>(op), key, scope);
-  if (found.status != EvalStatus::Completed)
-    return found;
-  CacheEntry *entry = found.getValue().value_or(nullptr);
+  // Evaluation can append candidates, including one equivalent to `op`.
+  size_t next = lookup.searched;
+  CacheEntry *entry =
+      findEquivalent(cast<EvaluableOpInterface>(op), lookup.key, next, scope);
   if (!entry) {
     auto *results =
         entryAllocator.Allocate<std::optional<Answer>>(answers.size());
     std::uninitialized_fill_n(results, answers.size(), std::nullopt);
     entry = new (entryAllocator.Allocate<CacheEntry>())
         CacheEntry{op, {results, answers.size()}};
-    entries[key].push_back(entry);
+    entries[lookup.key].push_back(entry);
   }
   fill(entry, answers);
-  return {EvalStatus::Completed, entry};
+  return entry;
 }
 
 void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
@@ -107,4 +79,4 @@ void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
   }
 }
 
-}
+} // namespace mlir::interpreter

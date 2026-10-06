@@ -126,8 +126,8 @@ struct Fixture {
                                         32);
   }
 
-  Operation *hashedOp(llvm::hash_code key) {
-    Operation *result = op();
+  Operation *hashedOp(llvm::hash_code key, unsigned results = 1) {
+    Operation *result = op(results);
     behaviors.at(result).hash = [key](Operation *, EvalScope &) {
       return EvalResult<llvm::hash_code>{EvalStatus::Completed, key};
     };
@@ -226,216 +226,259 @@ void testPartialResultsAndLifetime() {
   Answer first;
   {
     Engine engine(f.evalContext, f.cache, 1);
-    EvalScope scope(engine);
     Answer exhausted = engine.query(op->getResult(2));
     CHECK(exhausted.status == EvalStatus::Exhausted);
     CHECK(!exhausted.getValue());
-    auto *entry = f.cache.lookup(op, scope).getValue()->entry;
-    CHECK(entry->results.size() == 3);
-    CHECK(entry->results[0] && isInteger(*entry->results[0], 5));
-    CHECK(entry->results[1] && isUnknown(*entry->results[1]));
-    CHECK(!entry->results[2]);
     first = engine.query(op->getResult(0));
     CHECK(isInteger(first, 5));
     CHECK(isUnknown(engine.query(op->getResult(1))));
     CHECK(behaviors.at(op).evaluations == 1);
     CHECK(isInteger(engine.query(op->getResult(2)), 13));
     CHECK(behaviors.at(op).evaluations == 2);
-    CHECK(isInteger(*entry->results[0], 5));
-    CHECK(isUnknown(*entry->results[1]));
-    CHECK(isInteger(*entry->results[2], 13));
+    CHECK(isInteger(engine.query(op->getResult(0)), 5));
+    CHECK(isUnknown(engine.query(op->getResult(1))));
     CHECK(first.getValue()->isCached());
     f.cache.clear();
-    CHECK(!f.cache.lookup(op, scope).getValue()->entry);
+    CHECK(isInteger(engine.query(op->getResult(0)), 99));
+    CHECK(behaviors.at(op).evaluations == 3);
   }
   CHECK(isInteger(first, 5));
 }
 
 void testPartialHitFillsWithoutSearching() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1);
-  EvalScope scope(engine);
+  Engine engine(f.evalContext, f.cache, 1000);
   auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key);
-  SmallVector<Answer> pending{{EvalStatus::NeedsOrder, std::nullopt}};
-  CacheEntry *entry =
-      f.cache.insert(candidate, key, pending, scope).getValue().value();
-  Operation *op = f.hashedOp(key);
+  Operation *candidate = f.hashedOp(key, 2);
+  behaviors.at(candidate).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7),
+                               {EvalStatus::NeedsOrder, std::nullopt}};
+  };
+  CHECK(engine.query(candidate->getResult(1)).status == EvalStatus::NeedsOrder);
+  Operation *op = f.hashedOp(key, 2);
   unsigned comparisons = 0;
   behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
     ++comparisons;
     return EvalResult<bool>{EvalStatus::Completed, other == candidate};
   };
-  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+  behaviors.at(op).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7),
+                               integer(scope.getAllocator(), 8)};
+  };
+  CHECK(isInteger(engine.query(op->getResult(1)), 8));
   CHECK(behaviors.at(op).hashes == 1);
   CHECK(comparisons == 1);
-  CHECK(isInteger(*entry->results[0], 7));
+  CHECK(isInteger(engine.query(candidate->getResult(1)), 8));
+  CHECK(behaviors.at(candidate).evaluations == 1);
 }
 
-void testPreparedHashAndPromotion() {
+void testMissHashesOnce() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 0);
-  EvalScope scope(engine);
+  Engine engine(f.evalContext, f.cache, 1000);
   Operation *op = f.op(3);
-  auto result = f.cache.lookup(op, scope);
-  CHECK(!result.getValue()->entry);
+  Answer answer = engine.query(op->getResult(0));
+  CHECK(isInteger(answer, 7));
+  CHECK(answer.getValue()->isCached());
   CHECK(behaviors.at(op).hashes == 1);
-  CacheEntry *entry;
-  {
-    EvalValueStorageAllocator transient(f.evalContext, false);
-    SmallVector<Answer> answers{integer(transient, 42),
-                                {EvalStatus::NeedsOrder, std::nullopt},
-                                {EvalStatus::Exhausted, std::nullopt}};
-    auto inserted = f.cache.insert(op, result.getValue()->key, answers, scope);
-    CHECK(behaviors.at(op).hashes == 1);
-    entry = inserted.getValue().value();
-    CHECK(entry->results[0]->getValue()->getImpl() !=
-          answers[0].getValue()->getImpl());
-    CHECK(!entry->results[1] && !entry->results[2]);
-    answers[0] = integer(transient, 99);
-    answers[1] = {EvalStatus::Completed, std::nullopt};
-    answers[2] = integer(transient, 13);
-    CHECK(f.cache.insert(op, answers, scope).getValue().value() == entry);
-    CHECK(behaviors.at(op).hashes == 2);
-  }
-  CHECK(isInteger(*entry->results[0], 42));
-  CHECK(isUnknown(*entry->results[1]));
-  CHECK(isInteger(*entry->results[2], 13));
 }
 
 void testSignalsAndOptOut() {
   for (EvalStatus signal : {EvalStatus::Exhausted, EvalStatus::NeedsOrder}) {
     Fixture f;
-    Engine engine(f.evalContext, f.cache, 100);
-    EvalScope scope(engine);
-    Operation *op = f.op();
-    behaviors.at(op).hash =
+    Engine engine(f.evalContext, f.cache, 1000);
+    Operation *unhashable = f.op();
+    behaviors.at(unhashable).hash =
         [signal](Operation *, EvalScope &) -> EvalResult<llvm::hash_code> {
       return {signal, std::nullopt};
     };
-    CHECK(f.cache.lookup(op, scope).status == signal);
-    SmallVector<Answer> answers{{EvalStatus::Completed, std::nullopt}};
-    CHECK(f.cache.insert(op, answers, scope).status == signal);
-    Answer hashFailure = engine.query(op->getResult(0));
+    Answer hashFailure = engine.query(unhashable->getResult(0));
     CHECK(hashFailure.status == signal);
     CHECK(!hashFailure.getValue());
-    CHECK(behaviors.at(op).evaluations == 0);
+    CHECK(behaviors.at(unhashable).evaluations == 0);
 
+    // An equality signal skips the candidate instead of failing the lookup.
     auto key = llvm::hash_code(123);
     Operation *candidate = f.hashedOp(key);
-    f.cache.insert(candidate, key, answers, scope);
-    behaviors.at(op).hash = [key](Operation *, EvalScope &) {
-      return EvalResult<llvm::hash_code>{EvalStatus::Completed, key};
-    };
+    CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
+    Operation *op = f.hashedOp(key);
     behaviors.at(op).equal = [signal](Operation *, Operation *,
                                       EvalScope &) -> EvalResult<bool> {
       return {signal, std::nullopt};
     };
-    CHECK(f.cache.lookup(op, scope).status == signal);
-    CHECK(f.cache.insert(op, key, answers, scope).status == signal);
-    Answer equalityFailure = engine.query(op->getResult(0));
-    CHECK(equalityFailure.status == signal);
-    CHECK(!equalityFailure.getValue());
-    CHECK(behaviors.at(op).evaluations == 0);
-
-    behaviors.at(op).cacheable = false;
-    CHECK(isInteger(engine.query(op->getResult(0)), 7));
-    CHECK(isInteger(engine.query(op->getResult(0)), 7));
-    CHECK(behaviors.at(op).evaluations == 2);
-  }
-}
-
-void testNestedInsertion(bool inserting) {
-  Fixture f;
-  Engine engine(f.evalContext, f.cache, 10);
-  EvalScope scope(engine);
-  auto key = llvm::hash_code(123);
-  SmallVector<Answer> unknown{{EvalStatus::Completed, std::nullopt}};
-  Operation *candidate = f.hashedOp(key);
-  f.cache.insert(candidate, key, unknown, scope);
-  Operation *query = f.hashedOp(key);
-  Operation *equivalent = f.hashedOp(key);
-  behaviors.at(equivalent).equal = [query](Operation *, Operation *other,
-                                           EvalScope &) {
-    return EvalResult<bool>{EvalStatus::Completed, other == query};
-  };
-  bool populated = false;
-  CacheEntry *nestedEntry = nullptr;
-  behaviors.at(query).equal = [&](Operation *, Operation *other,
-                                  EvalScope &scope) -> EvalResult<bool> {
-    if (!populated) {
-      populated = true;
-      for (unsigned i = 0; i != 256; ++i)
-        f.cache.insert(f.hashedOp(llvm::hash_code(1000 + i)),
-                       llvm::hash_code(1000 + i), unknown, scope);
-      for (unsigned i = 0; i != 32; ++i)
-        f.cache.insert(f.hashedOp(key), key, unknown, scope);
-      nestedEntry =
-          f.cache.insert(equivalent, key, unknown, scope).getValue().value();
-    }
-    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
-  };
-  CacheEntry *found;
-  if (inserting)
-    found = f.cache.insert(query, key, unknown, scope).getValue().value();
-  else
-    found = f.cache.lookup(query, scope).getValue()->entry;
-  CHECK(populated);
-  CHECK(found == nestedEntry);
-  CHECK(found->op == equivalent);
-}
-
-void testInterruptedInsertionPreservesAnswer() {
-  for (EvalStatus signal : {EvalStatus::Exhausted, EvalStatus::NeedsOrder}) {
-    Fixture f;
-    Engine engine(f.evalContext, f.cache, 1);
-    EvalScope scope(engine);
-    auto key = llvm::hash_code(123);
-    Operation *candidate = f.hashedOp(key);
-    SmallVector<Answer> unknown{{EvalStatus::Completed, std::nullopt}};
-    f.cache.insert(candidate, key, unknown, scope);
-    Operation *op = f.hashedOp(key);
-    unsigned comparisons = 0;
-    behaviors.at(op).equal = [&](Operation *, Operation *,
-                                 EvalScope &) -> EvalResult<bool> {
-      ++comparisons;
-      if (behaviors.at(op).evaluations)
-        return {signal, std::nullopt};
-      return {EvalStatus::Completed, false};
-    };
-    Answer answer = engine.query(op->getResult(0));
-    CHECK(isInteger(answer, 7));
-    CHECK(answer.getValue() && !answer.getValue()->isCached());
+    Answer skipped = engine.query(op->getResult(0));
+    CHECK(isInteger(skipped, 7));
+    CHECK(skipped.getValue()->isCached());
     CHECK(behaviors.at(op).evaluations == 1);
-    CHECK(comparisons == 2);
+    CHECK(isInteger(engine.query(op->getResult(0)), 7));
+    CHECK(behaviors.at(op).evaluations == 1);
+
+    // Opting out skips hashing, so the signaling hash is never called.
+    behaviors.at(unhashable).cacheable = false;
+    CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
+    CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
+    CHECK(behaviors.at(unhashable).evaluations == 2);
+    CHECK(behaviors.at(unhashable).hashes == 1);
   }
 }
 
-void testInsertionAfterEvaluation() {
-  Fixture f;
-  Engine engine(f.evalContext, f.cache, 10);
-  EvalScope scope(engine);
-  auto key = llvm::hash_code(123);
-  Operation *op = f.hashedOp(key);
+/// Queries enough new operations to rehash the map and grow `key`'s bucket,
+/// then queries `equivalent`.
+void populate(Fixture &f, EvalScope &scope, llvm::hash_code key,
+              Operation *equivalent) {
+  for (unsigned i = 0; i != 256; ++i)
+    scope.query(f.hashedOp(llvm::hash_code(1000 + i))->getResult(0));
+  for (unsigned i = 0; i != 32; ++i)
+    scope.query(f.hashedOp(key)->getResult(0));
+  scope.query(equivalent->getResult(0));
+}
+
+Operation *equivalentTo(Fixture &f, llvm::hash_code key, Operation *op) {
   Operation *equivalent = f.hashedOp(key);
   behaviors.at(equivalent).equal = [op](Operation *, Operation *other,
                                         EvalScope &) {
     return EvalResult<bool>{EvalStatus::Completed, other == op};
   };
+  behaviors.at(equivalent).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
+  };
+  return equivalent;
+}
+
+void testNestedInsertionDuringLookup() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key);
+  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
+  Operation *query = f.hashedOp(key);
+  Operation *equivalent = equivalentTo(f, key, query);
+  bool populated = false;
+  behaviors.at(query).equal = [&](Operation *, Operation *other,
+                                  EvalScope &scope) {
+    if (!populated) {
+      populated = true;
+      populate(f, scope, key, equivalent);
+    }
+    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
+  };
+  CHECK(isInteger(engine.query(query->getResult(0)), 8));
+  CHECK(populated);
+  CHECK(behaviors.at(query).evaluations == 0);
+  CHECK(behaviors.at(equivalent).evaluations == 1);
+}
+
+void testNestedInsertionDuringInsert() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *op = f.hashedOp(key);
+  Operation *x = f.hashedOp(key);
+  Operation *equivalent = equivalentTo(f, key, op);
+  behaviors.at(op).evaluate = [x](Operation *, EvalScope &scope) {
+    scope.query(x->getResult(0));
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
+  };
+  bool populated = false;
+  behaviors.at(op).equal = [&](Operation *, Operation *other,
+                               EvalScope &scope) {
+    if (other == x && !populated) {
+      populated = true;
+      populate(f, scope, key, equivalent);
+    }
+    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
+  };
+  CHECK(isInteger(engine.query(op->getResult(0)), 8));
+  CHECK(populated);
+  CHECK(behaviors.at(op).evaluations == 1);
+  CHECK(behaviors.at(equivalent).evaluations == 1);
+}
+
+void testInsertResumesSearch() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key);
+  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
+  Operation *op = f.hashedOp(key);
+  Operation *x = f.hashedOp(key);
+  behaviors.at(op).evaluate = [x](Operation *, EvalScope &scope) {
+    scope.query(x->getResult(0));
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
+  };
+  std::map<Operation *, unsigned> comparisons;
+  behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
+    ++comparisons[other];
+    return EvalResult<bool>{EvalStatus::Completed, false};
+  };
+  Answer answer = engine.query(op->getResult(0));
+  CHECK(isInteger(answer, 7));
+  CHECK(answer.getValue()->isCached());
+  CHECK(comparisons[candidate] == 1);
+  CHECK(comparisons[x] == 1);
+}
+
+void testEqualityConsumesBudget() {
+  Fixture f;
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key);
+  Engine large(f.evalContext, f.cache, 1000);
+  CHECK(isInteger(large.query(candidate->getResult(0)), 7));
+  Operation *n1 = f.op();
+  Operation *n2 = f.op();
+  behaviors.at(n1).cacheable = false;
+  behaviors.at(n2).cacheable = false;
+  Operation *op = f.hashedOp(key);
+  behaviors.at(op).equal = [n1, n2](Operation *, Operation *,
+                                    EvalScope &scope) {
+    scope.query(n1->getResult(0));
+    scope.query(n2->getResult(0));
+    return EvalResult<bool>{EvalStatus::Completed, false};
+  };
+  // Comparing with `candidate` spends both steps, and skipping it refunds
+  // nothing.
+  Engine twoSteps(f.evalContext, f.cache, 2);
+  CHECK(twoSteps.query(op->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(behaviors.at(op).evaluations == 0);
+  Engine threeSteps(f.evalContext, f.cache, 3);
+  CHECK(isInteger(threeSteps.query(op->getResult(0)), 7));
+}
+
+void testResultCountFilter() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key, 2);
+  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
+  Operation *op = f.hashedOp(key);
+  unsigned comparisons = 0;
+  // Deliberately wrong: claims equality with every candidate.
+  behaviors.at(op).equal = [&](Operation *, Operation *, EvalScope &) {
+    ++comparisons;
+    return EvalResult<bool>{EvalStatus::Completed, true};
+  };
+  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+  CHECK(comparisons == 0);
+  CHECK(behaviors.at(op).evaluations == 1);
+}
+
+void testInsertionAfterEvaluation() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *op = f.hashedOp(key);
+  Operation *equivalent = equivalentTo(f, key, op);
   behaviors.at(op).equal = [equivalent](Operation *, Operation *other,
                                         EvalScope &) {
     return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
   };
-  CacheEntry *nestedEntry = nullptr;
-  behaviors.at(op).evaluate = [&](Operation *, EvalScope &scope) {
-    SmallVector<Answer> answers{integer(scope.getAllocator(), 7)};
-    nestedEntry =
-        f.cache.insert(equivalent, key, answers, scope).getValue().value();
-    return answers;
+  behaviors.at(op).evaluate = [equivalent](Operation *, EvalScope &scope) {
+    scope.query(equivalent->getResult(0));
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
   };
-  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+  CHECK(isInteger(engine.query(op->getResult(0)), 8));
   CHECK(behaviors.at(op).hashes == 1);
-  CHECK(f.cache.lookup(op, scope).getValue()->entry == nestedEntry);
+  CHECK(isInteger(engine.query(op->getResult(0)), 8));
+  CHECK(behaviors.at(op).evaluations == 1);
 }
 
 }
@@ -445,11 +488,13 @@ int main() {
   testZeroHashCollision();
   testPartialResultsAndLifetime();
   testPartialHitFillsWithoutSearching();
-  testPreparedHashAndPromotion();
+  testMissHashesOnce();
   testSignalsAndOptOut();
-  testNestedInsertion(false);
-  testNestedInsertion(true);
-  testInterruptedInsertionPreservesAnswer();
+  testNestedInsertionDuringLookup();
+  testNestedInsertionDuringInsert();
+  testInsertResumesSearch();
+  testEqualityConsumesBudget();
+  testResultCountFilter();
   testInsertionAfterEvaluation();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";

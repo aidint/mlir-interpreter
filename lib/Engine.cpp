@@ -72,20 +72,16 @@ Answer Engine::evaluate(Value value) {
   }
 
   EvalScope scope(*this);
-  bool cacheable = evaluable && evaluable.isCacheable();
-  llvm::hash_code key;
-  CacheEntry *hit = nullptr;
-  if (cacheable) {
-    auto cached = cache.lookup(op, scope);
-    if (cached.status != EvalStatus::Completed)
-      return {cached.status, std::nullopt};
-    assert(cached.getValue() && "completed lookup must provide a key");
-    auto [hash, entry] = *cached.getValue();
-    if (entry)
-      if (auto &answer = entry->results[result.getResultNumber()])
+  std::optional<CacheLookup> cached;
+  if (evaluable && evaluable.isCacheable()) {
+    auto lookup = cache.lookup(op, scope);
+    if (lookup.status != EvalStatus::Completed)
+      return {lookup.status, std::nullopt};
+    assert(lookup.getValue() && "completed lookup must provide a key");
+    cached = *lookup.getValue();
+    if (cached->entry)
+      if (auto &answer = cached->entry->results[result.getResultNumber()])
         return *answer;
-    key = hash;
-    hit = entry;
   }
 
   SmallVector<std::optional<EvalValue>> operands;
@@ -110,22 +106,16 @@ Answer Engine::evaluate(Value value) {
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
   Answer answer = results[result.getResultNumber()];
-  if (cacheable && llvm::any_of(results, [](const Answer &result) {
+  if (cached && llvm::any_of(results, [](const Answer &result) {
         return result.status == EvalStatus::Completed;
       })) {
-    CacheEntry *entry = hit;
-    if (entry) {
+    CacheEntry *entry = cached->entry;
+    if (entry)
       cache.fill(entry, results);
-    } else {
-      auto inserted = cache.insert(op, key, results, scope);
-      if (inserted.status != EvalStatus::Completed)
-        return answer;
-      assert(inserted.getValue() &&
-             "completed insertion must provide an entry");
-      entry = *inserted.getValue();
-    }
-    if (auto &cached = entry->results[result.getResultNumber()])
-      return *cached;
+    else
+      entry = cache.insert(op, *cached, results, scope);
+    if (auto &slot = entry->results[result.getResultNumber()])
+      return *slot;
   }
   return answer;
 }
