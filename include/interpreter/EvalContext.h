@@ -22,6 +22,7 @@ class AbstractEvalValue;
 class EvalValueStorageAllocator;
 
 namespace detail {
+class EvalCache;
 class EvalValueStorage;
 } // namespace detail
 
@@ -56,7 +57,15 @@ public:
     it->second->template attachInterface<Models...>();
   }
 
+  void clearCache();
+
 private:
+  friend class Engine;
+
+  /// Returns the cache shared by every engine on this context. Cached values
+  /// live until the context dies, so answers borrowing them never dangle.
+  detail::EvalCache &getCache() { return *cache; }
+
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
 
@@ -80,6 +89,7 @@ private:
 
   MLIRContext *mlirContext;
   DenseMap<TypeID, std::unique_ptr<AbstractEvalValue>> abstractEvalValues;
+  std::unique_ptr<detail::EvalCache> cache;
 };
 
 } // namespace mlir::interpreter

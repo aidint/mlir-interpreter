@@ -21,8 +21,11 @@ class Operation;
 
 namespace mlir::interpreter {
 
+class Engine;
 class EvalScope;
 class EvaluableOpInterface;
+
+namespace detail {
 
 /// This class represents the cached answers of an operation and of the
 /// operations equivalent to it, with one slot per result. An empty slot has no
@@ -47,17 +50,15 @@ struct CacheLookup {
 };
 
 /// This class represents the context cache: the answers operations completed,
-/// kept across queries. Like `EvalContext`, the client creates it once and
-/// passes it to every `Engine` evaluating the same IR, so an answer one query
-/// computes is reused by later queries and other engines. Entries are bucketed
-/// by `getHash` and matched with `isEqual`, so equivalent operations share one
-/// entry. Only `Engine` fills it, inside a query, because filling copies values
-/// out of the query allocator and dedups them by address, which is only valid
-/// while that query runs.
+/// kept across queries. Each `EvalContext` owns one, shared by every `Engine`
+/// on that context, so an answer one query computes is reused by later queries
+/// and other engines, and cached values live as long as the context. Entries
+/// are bucketed by `getHash` and matched with `isEqual`, so equivalent
+/// operations share one entry. Only `Engine` fills it, inside a query, because
+/// filling copies values out of the query allocator and dedups them by
+/// address, which is only valid while that query runs.
 class EvalCache {
 public:
-  explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
-
   void clear() {
     entries.clear();
     entryAllocator.Reset();
@@ -65,7 +66,10 @@ public:
   }
 
 private:
-  friend class Engine;
+  friend class interpreter::EvalContext;
+  friend class interpreter::Engine;
+
+  explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
 
   void beginQuery() { allocator.beginRetaining(); }
 
@@ -88,6 +92,7 @@ private:
   llvm::BumpPtrAllocator entryAllocator;
 };
 
+} // namespace detail
 } // namespace mlir::interpreter
 
 #endif

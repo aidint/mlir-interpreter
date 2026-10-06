@@ -19,8 +19,8 @@ namespace mlir::interpreter {
 
 class Engine {
 public:
-  Engine(EvalContext &ctx, EvalCache &cache, uint64_t budget)
-      : ctx(ctx), cache(cache), budget(budget), answerAllocator(ctx, false) {}
+  Engine(EvalContext &ctx, uint64_t budget)
+      : ctx(ctx), budget(budget), answerAllocator(ctx, false) {}
 
   EvalContext &getContext() { return ctx; }
 
@@ -39,7 +39,6 @@ private:
   Answer compute(Value value);
 
   EvalContext &ctx;
-  EvalCache &cache;
   uint64_t budget;
   uint64_t remaining = 0;
   EvalValueStorageAllocator answerAllocator;

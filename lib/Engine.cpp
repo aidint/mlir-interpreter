@@ -44,7 +44,7 @@ Answer Engine::query(Value value) {
   assert(!queryAllocator &&
          "cannot start a query while another query is active");
   remaining = budget;
-  cache.beginQuery();
+  ctx.getCache().beginQuery();
   answerAllocator.beginRetaining();
   queryAllocator.emplace(ctx, false);
   Answer answer = evaluate(value);
@@ -89,9 +89,9 @@ Answer Engine::compute(Value value) {
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
-  std::optional<CacheLookup> cached;
+  std::optional<detail::CacheLookup> cached;
   if (evaluable && evaluable.isCacheable()) {
-    auto lookup = cache.lookup(op, scope);
+    auto lookup = ctx.getCache().lookup(op, scope);
     if (lookup.status != EvalStatus::Completed)
       return {lookup.status, std::nullopt};
     assert(lookup.getValue() && "completed lookup must provide a key");
@@ -122,15 +122,15 @@ Answer Engine::compute(Value value) {
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
-  CacheEntry *entry = nullptr;
+  detail::CacheEntry *entry = nullptr;
   if (cached && llvm::any_of(results, [](const Answer &result) {
         return result.status == EvalStatus::Completed;
       })) {
     entry = cached->entry;
     if (entry)
-      cache.fill(entry, results);
+      ctx.getCache().fill(entry, results);
     else
-      entry = cache.insert(op, *cached, results, scope);
+      entry = ctx.getCache().insert(op, *cached, results, scope);
   }
 
   // Siblings were computed too; record them so querying one later in this

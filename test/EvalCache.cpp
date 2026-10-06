@@ -99,7 +99,6 @@ DialectRegistry registry() {
 struct Fixture {
   MLIRContext context{registry()};
   EvalContext evalContext{&context};
-  EvalCache cache{evalContext};
   OwningOpRef<ModuleOp> module{ModuleOp::create(UnknownLoc::get(&context))};
   OpBuilder builder{module->getBody(), module->getBody()->begin()};
 
@@ -178,10 +177,10 @@ void testSemanticReuseAndBudget() {
 
   // `first` costs 2 steps: hashing evaluates its constant, which the operand
   // loop then reuses, and evaluating `first` takes the second.
-  Engine oneStep(f.evalContext, f.cache, 1);
+  Engine oneStep(f.evalContext, 1);
   CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(first).evaluations == 0);
-  Engine twoSteps(f.evalContext, f.cache, 2);
+  Engine twoSteps(f.evalContext, 2);
   CHECK(isInteger(twoSteps.query(first->getResult(0)), 7));
   CHECK(behaviors.at(first).evaluations == 1);
 
@@ -195,7 +194,7 @@ void testSemanticReuseAndBudget() {
 
 void testZeroHashCollision() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1);
+  Engine engine(f.evalContext, 1);
   EvalScope scope(engine);
   Operation *first = f.hashedOp(llvm::hash_code(0));
   Operation *second = f.hashedOp(llvm::hash_code(0));
@@ -210,7 +209,7 @@ void testZeroHashCollision() {
   CHECK(isInteger(engine.query(second->getResult(0)), 8));
   CHECK(behaviors.at(first).evaluations == 1);
   CHECK(behaviors.at(second).evaluations == 1);
-  Engine noSteps(f.evalContext, f.cache, 0);
+  Engine noSteps(f.evalContext, 0);
   CHECK(isInteger(noSteps.query(first->getResult(0)), 7));
   CHECK(isInteger(noSteps.query(second->getResult(0)), 8));
 }
@@ -229,7 +228,7 @@ void testPartialResultsAndLifetime() {
   };
   Answer first;
   {
-    Engine engine(f.evalContext, f.cache, 1);
+    Engine engine(f.evalContext, 1);
     Answer exhausted = engine.query(op->getResult(2));
     CHECK(exhausted.status == EvalStatus::Exhausted);
     CHECK(!exhausted.getValue());
@@ -242,7 +241,7 @@ void testPartialResultsAndLifetime() {
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
     CHECK(isUnknown(engine.query(op->getResult(1))));
     CHECK(first.getValue()->isCached());
-    f.cache.clear();
+    f.evalContext.clearCache();
     CHECK(isInteger(engine.query(op->getResult(0)), 99));
     CHECK(behaviors.at(op).evaluations == 3);
   }
@@ -251,7 +250,7 @@ void testPartialResultsAndLifetime() {
 
 void testPartialHitFillsWithoutSearching() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key, 2);
   behaviors.at(candidate).evaluate = [](Operation *, EvalScope &scope) {
@@ -278,7 +277,7 @@ void testPartialHitFillsWithoutSearching() {
 
 void testMissHashesOnce() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   Operation *op = f.op(3);
   Answer answer = engine.query(op->getResult(0));
   CHECK(isInteger(answer, 7));
@@ -290,7 +289,7 @@ void testSignalsAndOptOut() {
   for (EvalStatus signal :
        {EvalStatus::Exhausted, EvalStatus::NeedsOrder, EvalStatus::Cycle}) {
     Fixture f;
-    Engine engine(f.evalContext, f.cache, 1000);
+    Engine engine(f.evalContext, 1000);
     Operation *unhashable = f.op();
     behaviors.at(unhashable).hash =
         [signal](Operation *, EvalScope &) -> EvalResult<llvm::hash_code> {
@@ -351,7 +350,7 @@ Operation *equivalentTo(Fixture &f, llvm::hash_code key, Operation *op) {
 
 void testNestedInsertionDuringLookup() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key);
   CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
@@ -374,7 +373,7 @@ void testNestedInsertionDuringLookup() {
 
 void testNestedInsertionDuringInsert() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *op = f.hashedOp(key);
   Operation *x = f.hashedOp(key);
@@ -400,7 +399,7 @@ void testNestedInsertionDuringInsert() {
 
 void testInsertResumesSearch() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key);
   CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
@@ -426,7 +425,7 @@ void testEqualityConsumesBudget() {
   Fixture f;
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key);
-  Engine large(f.evalContext, f.cache, 1000);
+  Engine large(f.evalContext, 1000);
   CHECK(isInteger(large.query(candidate->getResult(0)), 7));
   Operation *n1 = f.op();
   Operation *n2 = f.op();
@@ -441,16 +440,16 @@ void testEqualityConsumesBudget() {
   };
   // Comparing with `candidate` spends both steps, and skipping it refunds
   // nothing.
-  Engine twoSteps(f.evalContext, f.cache, 2);
+  Engine twoSteps(f.evalContext, 2);
   CHECK(twoSteps.query(op->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(op).evaluations == 0);
-  Engine threeSteps(f.evalContext, f.cache, 3);
+  Engine threeSteps(f.evalContext, 3);
   CHECK(isInteger(threeSteps.query(op->getResult(0)), 7));
 }
 
 void testResultCountFilter() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key, 2);
   CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
@@ -468,7 +467,7 @@ void testResultCountFilter() {
 
 void testInsertionAfterEvaluation() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *op = f.hashedOp(key);
   Operation *equivalent = equivalentTo(f, key, op);
@@ -488,7 +487,7 @@ void testInsertionAfterEvaluation() {
 
 void testCycleThroughEquality() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key);
   CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
@@ -509,7 +508,7 @@ void testCycleThroughEquality() {
 
 void testCycleThroughHash() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   Operation *op = f.op();
   behaviors.at(op).hash = [](Operation *op,
                              EvalScope &scope) -> EvalResult<llvm::hash_code> {
@@ -529,7 +528,7 @@ void testCycleThroughHash() {
 
 void testCycleThroughOperands() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   // The module body is a graph region, so a use-def cycle is valid IR.
   Operation *x = f.op();
   Operation *y = f.op(1, x->getResult(0));
@@ -545,7 +544,7 @@ void testCycleThroughOperands() {
 
 void testMemoizedOperand() {
   Fixture f;
-  Engine engine(f.evalContext, f.cache, 1000);
+  Engine engine(f.evalContext, 1000);
   Operation *n = f.op();
   behaviors.at(n).cacheable = false;
   Operation *a = f.op(1, n->getResult(0));
@@ -565,7 +564,7 @@ void testMemoizedSiblings() {
   Operation *sum = f.op(1, {pair->getResult(0), pair->getResult(1)});
   // One step for `pair` and one for `sum`: `pair`'s second result is recorded
   // when its first is evaluated.
-  Engine twoSteps(f.evalContext, f.cache, 2);
+  Engine twoSteps(f.evalContext, 2);
   CHECK(isInteger(twoSteps.query(sum->getResult(0)), 7));
   CHECK(behaviors.at(pair).evaluations == 1);
 }

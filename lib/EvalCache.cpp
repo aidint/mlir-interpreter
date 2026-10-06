@@ -4,7 +4,7 @@
 #include <cassert>
 #include <memory>
 
-namespace mlir::interpreter {
+namespace mlir::interpreter::detail {
 
 CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
                                       llvm::hash_code key, size_t &next,
@@ -83,4 +83,4 @@ void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
   }
 }
 
-} // namespace mlir::interpreter
+} // namespace mlir::interpreter::detail
