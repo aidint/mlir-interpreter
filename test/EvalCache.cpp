@@ -283,7 +283,8 @@ void testMissHashesOnce() {
 }
 
 void testSignalsAndOptOut() {
-  for (EvalStatus signal : {EvalStatus::Exhausted, EvalStatus::NeedsOrder}) {
+  for (EvalStatus signal :
+       {EvalStatus::Exhausted, EvalStatus::NeedsOrder, EvalStatus::Cycle}) {
     Fixture f;
     Engine engine(f.evalContext, f.cache, 1000);
     Operation *unhashable = f.op();
@@ -481,6 +482,63 @@ void testInsertionAfterEvaluation() {
   CHECK(behaviors.at(op).evaluations == 1);
 }
 
+void testCycleThroughEquality() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *candidate = f.hashedOp(key);
+  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
+  Operation *op = f.hashedOp(key);
+  std::optional<EvalStatus> recorded;
+  behaviors.at(op).equal = [&](Operation *op, Operation *,
+                               EvalScope &scope) -> EvalResult<bool> {
+    Answer answer = scope.query(op->getResult(0));
+    recorded = answer.status;
+    if (answer.status != EvalStatus::Completed)
+      return {answer.status, std::nullopt};
+    return {EvalStatus::Completed, false};
+  };
+  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+  CHECK(recorded == EvalStatus::Cycle);
+  CHECK(behaviors.at(op).evaluations == 1);
+}
+
+void testCycleThroughHash() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  Operation *op = f.op();
+  behaviors.at(op).hash = [](Operation *op,
+                             EvalScope &scope) -> EvalResult<llvm::hash_code> {
+    Answer answer = scope.query(op->getResult(0));
+    if (answer.status != EvalStatus::Completed)
+      return {answer.status, std::nullopt};
+    return {EvalStatus::Completed, llvm::hash_value(op)};
+  };
+  Answer cycle = engine.query(op->getResult(0));
+  CHECK(cycle.status == EvalStatus::Cycle);
+  CHECK(!cycle.getValue());
+  CHECK(behaviors.at(op).evaluations == 0);
+  // `op` must have left the active set on the early return.
+  behaviors.at(op).hash = Behavior().hash;
+  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+}
+
+void testCycleThroughOperands() {
+  Fixture f;
+  Engine engine(f.evalContext, f.cache, 1000);
+  // The module body is a graph region, so a use-def cycle is valid IR.
+  Operation *x = f.op();
+  Operation *y = f.op(1, x->getResult(0));
+  x->setOperands(y->getResult(0));
+  Answer cycle = engine.query(x->getResult(0));
+  CHECK(cycle.status == EvalStatus::Cycle);
+  CHECK(!cycle.getValue());
+  CHECK(behaviors.at(x).evaluations == 0);
+  CHECK(behaviors.at(y).evaluations == 0);
+  x->setOperands({});
+  CHECK(isInteger(engine.query(y->getResult(0)), 7));
+}
+
 }
 
 int main() {
@@ -496,6 +554,9 @@ int main() {
   testEqualityConsumesBudget();
   testResultCountFilter();
   testInsertionAfterEvaluation();
+  testCycleThroughEquality();
+  testCycleThroughHash();
+  testCycleThroughOperands();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

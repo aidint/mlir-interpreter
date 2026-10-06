@@ -3,6 +3,7 @@
 
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/DebugLog.h"
 
 #define DEBUG_TYPE "interpreter"
@@ -71,6 +72,12 @@ Answer Engine::evaluate(Value value) {
     return unknown;
   }
 
+  // Cache-key methods and graph-region operands can re-enter an operation
+  // whose evaluation is in progress.
+  if (!active.insert(op).second)
+    return {EvalStatus::Cycle, std::nullopt};
+  llvm::scope_exit leave([&] { active.erase(op); });
+
   EvalScope scope(*this);
   std::optional<CacheLookup> cached;
   if (evaluable && evaluable.isCacheable()) {
@@ -133,6 +140,8 @@ StringRef stringifyEvalStatus(EvalStatus status) {
     return "exhausted";
   case EvalStatus::NeedsOrder:
     return "needs order";
+  case EvalStatus::Cycle:
+    return "cycle";
   }
   llvm_unreachable("unhandled EvalStatus");
 }

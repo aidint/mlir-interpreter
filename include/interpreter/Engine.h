@@ -9,6 +9,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
+
 #include <cstdint>
 #include <optional>
 
@@ -38,6 +40,8 @@ private:
   uint64_t remaining = 0;
   EvalValueStorageAllocator answerAllocator;
   std::optional<EvalValueStorageAllocator> queryAllocator;
+  /// Operations being evaluated in the current query.
+  llvm::SmallPtrSet<Operation *, 8> active;
 };
 
 StringRef stringifyEvalStatus(EvalStatus status);

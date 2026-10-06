@@ -12,7 +12,7 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
 
   let methods = [
     InterfaceMethod<
-      "Computes a stable cache hash, or returns Exhausted/NeedsOrder. Defaults to the operation's identity.",
+      "Computes a stable cache hash, or returns Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
       "::mlir::interpreter::EvalResult<::llvm::hash_code>", "getHash",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
@@ -20,7 +20,7 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
                 ::llvm::hash_value($_op.getOperation())};
       }]>,
     InterfaceMethod<
-      "Compares cache keys symmetrically; equal operations must hash equally. May return Exhausted/NeedsOrder. Defaults to the operation's identity.",
+      "Compares cache keys symmetrically; equal operations must hash equally. May return Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
       "::mlir::interpreter::EvalResult<bool>", "isEqual",
       (ins "::mlir::Operation *":$other,
            "::mlir::interpreter::EvalScope &":$scope), [{}],
