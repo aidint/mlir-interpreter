@@ -89,7 +89,7 @@ Answer Engine::compute(Value value) {
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
-  std::optional<CacheLookup> cached;
+  std::optional<detail::CacheLookup> cached;
   if (evaluable && evaluable.isCacheable()) {
     auto lookup = ctx.getCache().lookup(op, scope);
     if (lookup.status != EvalStatus::Completed)
@@ -122,7 +122,7 @@ Answer Engine::compute(Value value) {
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
-  CacheEntry *entry = nullptr;
+  detail::CacheEntry *entry = nullptr;
   if (cached && llvm::any_of(results, [](const Answer &result) {
         return result.status == EvalStatus::Completed;
       })) {

@@ -5,7 +5,7 @@
 namespace mlir::interpreter {
 
 EvalContext::EvalContext(MLIRContext *mlirContext)
-    : mlirContext(mlirContext), cache(new EvalCache(*this)) {}
+    : mlirContext(mlirContext), cache(new detail::EvalCache(*this)) {}
 
 EvalContext::~EvalContext() = default;
 

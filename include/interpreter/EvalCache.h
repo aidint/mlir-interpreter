@@ -21,8 +21,11 @@ class Operation;
 
 namespace mlir::interpreter {
 
+class Engine;
 class EvalScope;
 class EvaluableOpInterface;
+
+namespace detail {
 
 /// This class represents the cached answers of an operation and of the
 /// operations equivalent to it, with one slot per result. An empty slot has no
@@ -63,8 +66,8 @@ public:
   }
 
 private:
-  friend class EvalContext;
-  friend class Engine;
+  friend class interpreter::EvalContext;
+  friend class interpreter::Engine;
 
   explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
 
@@ -89,6 +92,7 @@ private:
   llvm::BumpPtrAllocator entryAllocator;
 };
 
+} // namespace detail
 } // namespace mlir::interpreter
 
 #endif
