@@ -17,37 +17,51 @@ Answer known(EvalScope &scope, APInt value) {
 
 Answer unknown() { return {EvalStatus::Completed, std::nullopt}; }
 
-const APInt *getInt(const std::optional<EvalValue> &value) {
+const APInt *getInt(const Answer &answer) {
+  const auto &value = answer.getValue();
   return value ? &cast<IntEvalValue>(*value).getValue() : nullptr;
 }
 
 struct AddIOpEval
     : EvaluableOpInterface::ExternalModel<AddIOpEval, arith::AddIOp> {
-  SmallVector<Answer> evaluate(Operation *,
-                               ArrayRef<std::optional<EvalValue>> operands,
-                               EvalScope &scope) const {
-    const APInt *lhs = getInt(operands[0]);
-    const APInt *rhs = getInt(operands[1]);
-    if (!lhs || !rhs)
+  SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
+    // An unknown operand makes the sum unknown, so the other one is never
+    // queried.
+    Answer lhs = scope.query(op->getOperand(0));
+    if (lhs.status != EvalStatus::Completed)
+      return propagateSignal(op, lhs);
+    const APInt *lhsInt = getInt(lhs);
+    if (!lhsInt)
       return {unknown()};
-    return {known(scope, *lhs + *rhs)};
+    Answer rhs = scope.query(op->getOperand(1));
+    if (rhs.status != EvalStatus::Completed)
+      return propagateSignal(op, rhs);
+    const APInt *rhsInt = getInt(rhs);
+    if (!rhsInt)
+      return {unknown()};
+    return {known(scope, *lhsInt + *rhsInt)};
   }
 };
 
 struct MulIOpEval
     : EvaluableOpInterface::ExternalModel<MulIOpEval, arith::MulIOp> {
-  SmallVector<Answer> evaluate(Operation *,
-                               ArrayRef<std::optional<EvalValue>> operands,
-                               EvalScope &scope) const {
-    const APInt *lhs = getInt(operands[0]);
-    const APInt *rhs = getInt(operands[1]);
-    if (lhs && lhs->isZero())
-      return {known(scope, *lhs)};
-    if (rhs && rhs->isZero())
-      return {known(scope, *rhs)};
-    if (!lhs || !rhs)
+  SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
+    // A zero operand decides the product, so the other one is never queried.
+    Answer lhs = scope.query(op->getOperand(0));
+    if (lhs.status != EvalStatus::Completed)
+      return propagateSignal(op, lhs);
+    const APInt *lhsInt = getInt(lhs);
+    if (lhsInt && lhsInt->isZero())
+      return {lhs};
+    Answer rhs = scope.query(op->getOperand(1));
+    if (rhs.status != EvalStatus::Completed)
+      return propagateSignal(op, rhs);
+    const APInt *rhsInt = getInt(rhs);
+    if (rhsInt && rhsInt->isZero())
+      return {rhs};
+    if (!lhsInt || !rhsInt)
       return {unknown()};
-    return {known(scope, *lhs * *rhs)};
+    return {known(scope, *lhsInt * *rhsInt)};
   }
 };
 

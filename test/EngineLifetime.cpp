@@ -61,15 +61,19 @@ public:
 
 struct SubIOpEval
     : EvaluableOpInterface::ExternalModel<SubIOpEval, arith::SubIOp> {
-  SmallVector<Answer> evaluate(Operation *,
-                               ArrayRef<std::optional<EvalValue>> operands,
-                               EvalScope &scope) const {
-    if (!operands[0] || !operands[1])
+  SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
+    Answer lhs = scope.query(op->getOperand(0));
+    if (lhs.status != EvalStatus::Completed)
+      return propagateSignal(op, lhs);
+    Answer rhs = scope.query(op->getOperand(1));
+    if (rhs.status != EvalStatus::Completed)
+      return propagateSignal(op, rhs);
+    if (!lhs.getValue() || !rhs.getValue())
       return {{EvalStatus::Completed, std::nullopt}};
-    const APInt &lhs = cast<IntEvalValue>(*operands[0]).getValue();
-    const APInt &rhs = cast<IntEvalValue>(*operands[1]).getValue();
+    const APInt &lhsInt = cast<IntEvalValue>(*lhs.getValue()).getValue();
+    const APInt &rhsInt = cast<IntEvalValue>(*rhs.getValue()).getValue();
     return {{EvalStatus::Completed,
-             TrackedEvalValue::get(scope.getAllocator(), lhs - rhs)}};
+             TrackedEvalValue::get(scope.getAllocator(), lhsInt - rhsInt)}};
   }
 
   bool isCacheable(Operation *) const { return false; }

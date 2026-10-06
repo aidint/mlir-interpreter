@@ -5,8 +5,8 @@ include "mlir/IR/OpBase.td"
 
 def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
   let description = [{
-    Computes an operation's results from its operands, each of which may be
-    unknown.
+    Evaluates an operation's results, querying through `EvalScope` only the
+    operands it needs.
   }];
   let cppNamespace = "::mlir::interpreter";
 
@@ -29,10 +29,9 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
                 $_op.getOperation() == other};
       }]>,
     InterfaceMethod<
-      "Returns one answer per result.",
+      "Returns one answer per result. Operands are queried through `scope`, and a signal from one must be propagated, e.g. with `propagateSignal`.",
       "::llvm::SmallVector<::mlir::interpreter::Answer>", "evaluate",
-      (ins "::llvm::ArrayRef<::std::optional<::mlir::interpreter::EvalValue>>":$operands,
-           "::mlir::interpreter::EvalScope &":$scope)>,
+      (ins "::mlir::interpreter::EvalScope &":$scope)>,
     InterfaceMethod<
       "Returns whether stable results may be retained across queries.",
       "bool", "isCacheable", (ins), [{}],

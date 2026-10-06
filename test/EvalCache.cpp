@@ -57,6 +57,11 @@ struct Behavior {
       };
   std::function<SmallVector<Answer>(Operation *, EvalScope &)> evaluate =
       [](Operation *op, EvalScope &scope) {
+        for (Value operand : op->getOperands()) {
+          Answer answer = scope.query(operand);
+          if (answer.status != EvalStatus::Completed)
+            return propagateSignal(op, answer);
+        }
         return SmallVector<Answer>(op->getNumResults(),
                                    integer(scope.getAllocator(), 7));
       };
@@ -78,9 +83,7 @@ struct TestModel
     return behaviors.at(op).equal(op, other, scope);
   }
 
-  SmallVector<Answer> evaluate(Operation *op,
-                               ArrayRef<std::optional<EvalValue>>,
-                               EvalScope &scope) const {
+  SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
     auto &behavior = behaviors.at(op);
     ++behavior.evaluations;
     return behavior.evaluate(op, scope);
@@ -175,8 +178,8 @@ void testSemanticReuseAndBudget() {
   semanticKey(first);
   semanticKey(second);
 
-  // `first` costs 2 steps: hashing evaluates its constant, which the operand
-  // loop then reuses, and evaluating `first` takes the second.
+  // `first` costs 2 steps: hashing evaluates its constant, which evaluating
+  // `first` then reuses, and evaluating `first` takes the second.
   Engine oneStep(f.evalContext, 1);
   CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(first).evaluations == 0);
@@ -536,8 +539,8 @@ void testCycleThroughOperands() {
   Answer cycle = engine.query(x->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
   CHECK(!cycle.getValue());
-  CHECK(behaviors.at(x).evaluations == 0);
-  CHECK(behaviors.at(y).evaluations == 0);
+  CHECK(behaviors.at(x).evaluations == 1);
+  CHECK(behaviors.at(y).evaluations == 1);
   x->setOperands({});
   CHECK(isInteger(engine.query(y->getResult(0)), 7));
 }
@@ -549,7 +552,7 @@ void testMemoizedOperand() {
   behaviors.at(n).cacheable = false;
   Operation *a = f.op(1, n->getResult(0));
   semanticKey(a);
-  // Hashing `a` and its operand loop share one evaluation of `n`.
+  // Hashing and evaluating `a` share one evaluation of `n`.
   CHECK(isInteger(engine.query(a->getResult(0)), 7));
   CHECK(behaviors.at(n).evaluations == 1);
   // The memo is per query, so hashing `a` again evaluates `n` again.
@@ -567,6 +570,25 @@ void testMemoizedSiblings() {
   Engine twoSteps(f.evalContext, 2);
   CHECK(isInteger(twoSteps.query(sum->getResult(0)), 7));
   CHECK(behaviors.at(pair).evaluations == 1);
+}
+
+void testLazyOperands() {
+  Fixture f;
+  Engine oneStep(f.evalContext, 1);
+  Operation *operand = f.op();
+  Operation *ignoring = f.op(1, operand->getResult(0));
+  behaviors.at(ignoring).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
+  };
+  // `ignoring` never queries its operand, so it costs only its own step.
+  CHECK(isInteger(oneStep.query(ignoring->getResult(0)), 8));
+  CHECK(behaviors.at(operand).evaluations == 0);
+  // The step is charged before `evaluate` runs, so `user` runs and its operand
+  // exhausts.
+  Operation *user = f.op(1, operand->getResult(0));
+  CHECK(oneStep.query(user->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(behaviors.at(user).evaluations == 1);
+  CHECK(behaviors.at(operand).evaluations == 0);
 }
 
 }
@@ -589,6 +611,7 @@ int main() {
   testCycleThroughOperands();
   testMemoizedOperand();
   testMemoizedSiblings();
+  testLazyOperands();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
