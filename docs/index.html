@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MLIR Interpreter</title>
+<meta name="description" content="A query-driven MLIR interpreter with a semantic cache, compiled to WebAssembly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <header class="masthead">
+    <p class="eyebrow">MLIR &middot; WebAssembly</p>
+    <h1>A query-driven MLIR interpreter,<br>running in your browser</h1>
+    <p class="lede">
+      Every result of <code>@main</code> is queried in source order through one
+      semantic cache, so equal computations hit even when their operands are
+      different SSA values. The C++ interpreter is compiled to WebAssembly and
+      runs in a Web Worker on this page.
+    </p>
+  </header>
+
+  <section class="toolbar" aria-label="Run controls">
+    <label class="field">
+      <span>Example</span>
+      <select id="example"></select>
+    </label>
+    <label class="field">
+      <span>Budget per value</span>
+      <input id="budget" type="text" inputmode="numeric" autocomplete="off" value="1000">
+    </label>
+    <div class="actions">
+      <button id="run" class="primary" disabled>Run</button>
+      <button id="cancel" class="secondary" disabled>Cancel</button>
+    </div>
+    <p id="status" class="status" role="status" data-state="loading">Loading the interpreter…</p>
+  </section>
+
+  <main class="columns">
+    <section class="panel" aria-labelledby="source-title">
+      <header class="panel-head">
+        <h2 id="source-title">MLIR</h2>
+        <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> runs</span>
+      </header>
+      <textarea id="source" spellcheck="false" autocapitalize="off" aria-labelledby="source-title"></textarea>
+    </section>
+    <section class="panel" aria-labelledby="report-title">
+      <header class="panel-head">
+        <h2 id="report-title">Report</h2>
+        <span id="summary" class="hint"></span>
+      </header>
+      <div id="report" class="report">
+        <table>
+          <thead><tr><th>value</th><th>evaluated</th><th>cache</th><th>status</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="empty">Run the module to see one row per result.</p>
+        <ul id="diagnostics" class="diagnostics"></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="notes">
+    <div>
+      <h3>Budget per value</h3>
+      <p>Each result's query gets this many steps, shared by hashing, equality and
+      evaluation. The cache lives for the whole run, and every run starts with an
+      empty one.</p>
+    </div>
+    <div>
+      <h3>Cache</h3>
+      <p><b>hit</b> or <b>miss</b> is the lookup for the result's own operation.
+      <b>—</b> means the operation isn't cached, like a constant, or hashing ran out
+      of budget first.</p>
+    </div>
+    <div>
+      <h3>Control flow</h3>
+      <p>Nothing is executed. Values are queried on demand, so block arguments and
+      results of branches, regions and calls are <i>unknown</i>.</p>
+    </div>
+  </footer>
+</div>
+<noscript><p class="page">This page needs JavaScript and WebAssembly.</p></noscript>
+<script src="main.js"></script>
+</body>
+</html>
