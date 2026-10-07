@@ -25,3 +25,4 @@ target_link_libraries(Interpreter PUBLIC
   MLIRFuncDialect)
 
 add_subdirectory(Dialects)
+add_subdirectory(Tools)

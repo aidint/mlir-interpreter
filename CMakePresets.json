@@ -32,10 +32,25 @@
         "CMAKE_BUILD_TYPE": "Release",
         "LLVM_ENABLE_ASSERTIONS": "OFF"
       }
+    },
+    {
+      "name": "wasm",
+      "displayName": "WebAssembly (Emscripten, Release)",
+      "description": "Needs the release preset's TableGen tools and an activated emsdk (source emsdk_env.sh).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LLVM_ENABLE_ASSERTIONS": "OFF",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
+      }
     }
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" }
+    { "name": "release", "configurePreset": "release" },
+    { "name": "wasm", "configurePreset": "wasm" }
   ]
 }

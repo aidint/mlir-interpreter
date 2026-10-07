@@ -1,1 +1,5 @@
-add_subdirectory(interpreter)
+if(EMSCRIPTEN)
+  add_subdirectory(interpreter-wasm)
+else()
+  add_subdirectory(interpreter)
+endif()

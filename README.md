@@ -34,7 +34,11 @@ build/debug/third_party/llvm-project/llvm/bin/llvm-lit build/debug/examples/05-z
   - `InterpreterBuiltin`: builtin values and attribute models
     (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
+- `include/interpreter/Tools/`, `lib/Tools/`: `InterpreterRunner`, which runs
+  `@main` and builds the report (`runMain`) for the tool and the Wasm module.
 - `tools/interpreter/`: the `interpreter` tool.
+- `tools/interpreter-wasm/`: the runner as a WebAssembly module, and the
+  showcase page.
 - `examples/`: MLIR modules for the tool. Each checks its own report with
   `RUN` and `CHECK` lines.
 - `test/`: the shared `lit` config, tool tests, and the C++ regressions
@@ -175,8 +179,8 @@ value   evaluated   cache    status
 ```
 
 The tool registers the `func`, `arith`, `cf`, `scf`, `index` and `ub` dialects.
-To support more, add them in `tools/interpreter/interpreter.cpp` and link the
-matching `MLIR*Dialect` libraries in its `CMakeLists.txt`.
+To support more, add them to `registerRunnerDialects` in `lib/Tools/Runner.cpp`
+and link the matching `MLIR*Dialect` libraries in `lib/Tools/CMakeLists.txt`.
 
 ## Updating LLVM
 

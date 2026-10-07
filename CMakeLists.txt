@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 3.29)
 
-# Default to clang/clang++ unless a compiler was chosen explicitly (e.g. via a
-# preset or -DCMAKE_CXX_COMPILER=...). Must happen before project().
-if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
-  set(CMAKE_C_COMPILER clang)
-endif()
-if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
-  set(CMAKE_CXX_COMPILER clang++)
+# Default to clang/clang++ unless a compiler or toolchain file was chosen
+# explicitly (e.g. via a preset or -DCMAKE_CXX_COMPILER=...). Must happen
+# before project().
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
+    set(CMAKE_C_COMPILER clang)
+  endif()
+  if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
+    set(CMAKE_CXX_COMPILER clang++)
+  endif()
 endif()
 
 project(interpreter LANGUAGES C CXX)
@@ -32,10 +35,13 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
-add_subdirectory(test)
+if(NOT EMSCRIPTEN)
+  add_subdirectory(test)
+endif()
 
-# Expose compile_commands.json at the repo root for clangd.
-if(PROJECT_IS_TOP_LEVEL)
+# Expose compile_commands.json at the repo root for clangd. Wasm builds leave it
+# pointing at the native build, whose flags clangd understands.
+if(PROJECT_IS_TOP_LEVEL AND NOT EMSCRIPTEN)
   file(CREATE_LINK
     "${CMAKE_BINARY_DIR}/compile_commands.json"
     "${CMAKE_SOURCE_DIR}/compile_commands.json"

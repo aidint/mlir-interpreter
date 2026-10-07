@@ -6,3 +6,4 @@ CLAUDE.md
 AGENTS.md
 specs
 .clangd
+/third_party/emsdk/

@@ -19,6 +19,30 @@ if(NOT EXISTS "${LLVM_PROJECT_SOURCE_DIR}/llvm/CMakeLists.txt")
     "  git submodule update --init --depth 1 third_party/llvm-project")
 endif()
 
+# Emscripten cross-builds run TableGen from the native release build and build
+# LLVM without target backends or threads. Must come before the defaults below,
+# which don't override existing entries.
+if(EMSCRIPTEN)
+  set(LLVM_NATIVE_TOOL_DIR
+    "${PROJECT_SOURCE_DIR}/build/release/third_party/llvm-project/llvm/bin"
+    CACHE PATH "Directory with native llvm-min-tblgen and mlir-tblgen")
+  foreach(tool llvm-min-tblgen mlir-tblgen)
+    if(NOT EXISTS "${LLVM_NATIVE_TOOL_DIR}/${tool}")
+      message(FATAL_ERROR
+        "${tool} is missing from LLVM_NATIVE_TOOL_DIR. Build it natively:\n"
+        "  cmake --preset release\n"
+        "  cmake --build --preset release")
+    endif()
+  endforeach()
+  set(LLVM_HOST_TRIPLE "wasm32-unknown-emscripten" CACHE STRING "")
+  set(LLVM_TARGETS_TO_BUILD "" CACHE STRING "")
+  set(LLVM_ENABLE_THREADS OFF CACHE BOOL "")
+  set(LLVM_ENABLE_PIC OFF CACHE BOOL "")
+  set(LLVM_ENABLE_BACKTRACES OFF CACHE BOOL "")
+  set(LLVM_ENABLE_CRASH_OVERRIDES OFF CACHE BOOL "")
+  set(LLVM_ENABLE_UNWIND_TABLES OFF CACHE BOOL "")
+endif()
+
 # Defaults for the LLVM build. These are plain cache entries (not FORCE), so
 # they can still be overridden from the command line with -D.
 set(LLVM_ENABLE_PROJECTS "mlir" CACHE STRING "")
