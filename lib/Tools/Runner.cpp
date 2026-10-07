@@ -64,6 +64,20 @@ static std::string getSourceName(OpResult result,
   return name;
 }
 
+/// Returns the name `arg` has in the source, e.g. `%x`, or an empty string
+/// when its block was built without naming it.
+static std::string getSourceName(BlockArgument arg,
+                                 const AsmParserState &parserState) {
+  const auto *def = parserState.getBlockDef(arg.getOwner());
+  if (!def || arg.getArgNumber() >= def->arguments.size())
+    return {};
+  llvm::SMRange range = def->arguments[arg.getArgNumber()].loc;
+  if (!range.isValid())
+    return {};
+  return std::string(range.Start.getPointer(),
+                     range.End.getPointer() - range.Start.getPointer());
+}
+
 static std::string printEvaluated(const Answer &answer) {
   if (answer.status != EvalStatus::Completed)
     return "—";
@@ -92,9 +106,35 @@ static StringRef printCacheOutcome(CacheOutcome outcome) {
   llvm_unreachable("unhandled CacheOutcome");
 }
 
-FailureOr<SmallVector<ReportRow>>
+/// Returns the value of `main` named `name` in the source, an operation result
+/// or a block argument, or null.
+static Value lookupValue(func::FuncOp main, StringRef name,
+                         const AsmParserState &parserState) {
+  Value found;
+  main->walk([&](Block *block) {
+    for (BlockArgument arg : block->getArguments()) {
+      if (getSourceName(arg, parserState) == name) {
+        found = arg;
+        return WalkResult::interrupt();
+      }
+    }
+    for (Operation &op : *block) {
+      for (OpResult result : op.getResults()) {
+        if (getSourceName(result, parserState) == name) {
+          found = result;
+          return WalkResult::interrupt();
+        }
+      }
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
+FailureOr<RunReport>
 mlir::interpreter::runMain(llvm::SourceMgr &sourceMgr, MLIRContext &context,
-                           uint64_t budget) {
+                           uint64_t budget,
+                           const std::optional<NamedQuery> &query) {
   // Parsing records the source ranges of SSA names, so rows can show them.
   Block block;
   AsmParserState parserState;
@@ -112,24 +152,37 @@ mlir::interpreter::runMain(llvm::SourceMgr &sourceMgr, MLIRContext &context,
   FailureOr<func::FuncOp> main = getEntryPoint(*module);
   if (failed(main))
     return failure();
+  Value queried;
+  if (query) {
+    queried = lookupValue(*main, query->name, parserState);
+    if (!queried)
+      return main->emitError()
+             << "no value named '" << query->name << "' in @main";
+  }
 
   EvalContext evalContext(&context);
   registerBuiltinEvalValues(evalContext);
   // One engine shares the context's cache across every reported value, and
   // each query gets a fresh budget.
   Engine engine(evalContext, budget);
+  auto queryRow = [&](Value value, std::string name) -> ReportRow {
+    CacheOutcome outcome;
+    Answer answer = engine.query(value, outcome);
+    return {std::move(name), printEvaluated(answer),
+            printCacheOutcome(outcome), stringifyEvalStatus(answer.status)};
+  };
 
+  RunReport report;
+  if (query && query->position == QueryPosition::Before)
+    report.query = queryRow(queried, query->name);
   // Every block and nested region is reported in source order. Values are
   // queried on demand, so a row doesn't depend on which branch would run.
-  SmallVector<ReportRow> rows;
   main->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    for (OpResult result : op->getResults()) {
-      CacheOutcome outcome;
-      Answer answer = engine.query(result, outcome);
-      rows.push_back({getSourceName(result, parserState),
-                      printEvaluated(answer), printCacheOutcome(outcome),
-                      stringifyEvalStatus(answer.status)});
-    }
+    for (OpResult result : op->getResults())
+      report.rows.push_back(
+          queryRow(result, getSourceName(result, parserState)));
   });
-  return rows;
+  if (query && query->position == QueryPosition::After)
+    report.query = queryRow(queried, query->name);
+  return report;
 }

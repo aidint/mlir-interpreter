@@ -16,13 +16,18 @@ const loaded = (async () => {
   postMessage({ type: 'load-error', message: String(error) });
 });
 
-function run(source, budget) {
+// Runs `source`, and `query` ({name, before}) if given. A null pointer, 0,
+// tells the module there is no query.
+function run(source, budget, query) {
   const sourcePtr = interpreter.stringToNewUTF8(source);
+  const namePtr = query ? interpreter.stringToNewUTF8(query.name) : 0;
   let reportPtr;
   try {
-    reportPtr = interpreter._interpreter_run(sourcePtr, BigInt(budget));
+    reportPtr = interpreter._interpreter_run(
+        sourcePtr, BigInt(budget), namePtr, query?.before ? 1 : 0);
   } finally {
     interpreter._free(sourcePtr);
+    interpreter._free(namePtr);
   }
   try {
     return JSON.parse(interpreter.UTF8ToString(reportPtr));
@@ -35,10 +40,10 @@ onmessage = async ({ data }) => {
   await loaded;
   if (!interpreter)
     return;
-  const { id, source, budget } = data;
+  const { id, source, budget, query } = data;
   const start = performance.now();
   try {
-    const report = run(source, budget);
+    const report = run(source, budget, query);
     postMessage({ type: 'result', id, report, runMs: performance.now() - start });
   } catch (error) {
     // A trap or abort leaves the module unusable, so the page replaces this

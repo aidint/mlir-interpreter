@@ -68,6 +68,22 @@ equality and evaluation share that budget. A hit can still spend budget
 computing its key, since keys hold evaluated operands, and constants are not
 cached across queries, so each query pays a step per constant it reaches.
 
+`--query=NAME` also queries the value with that source name, a result like
+`%b` or a block argument like `%arg0`, through the same engine, so it shares the
+rows' cache. It runs after the rows,
+or before them with `--query-before`, and prints its own table in that order:
+
+```sh
+$ build/debug/tools/interpreter/interpreter --query=%b --query-before test/named-query.mlir
+query   evaluated   cache    status
+%b      5           miss     completed
+
+value   evaluated   cache    status
+...
+%a      5           hit      completed
+%b      5           hit      completed
+```
+
 Other options: `--allow-unregistered-dialect`, and `--split-input-file` and
 `--verify-diagnostics`, which work as in `mlir-opt`.
 

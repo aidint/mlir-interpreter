@@ -54,17 +54,26 @@ static DiagnosticEntry getEntry(const Diagnostic &diag) {
   return entry;
 }
 
-/// Runs `@main` in `source` with a fresh context and cache, and writes the
-/// report to `os` as JSON:
+static void writeRow(llvm::json::OStream &json, const ReportRow &row) {
+  json.attribute("name", row.name);
+  json.attribute("evaluated", row.evaluated);
+  json.attribute("cache", row.cache);
+  json.attribute("status", row.status);
+}
+
+/// Runs `@main` in `source`, plus `query` if given, with a fresh context and
+/// cache, and writes the report to `os` as JSON:
 ///
 ///   {"rows": [{"name": "%a", "evaluated": "5", "cache": "miss",
 ///              "status": "completed"}],
+///    "query": {"name": "%b", ..., "position": "after"},
 ///    "diagnostics": [{"severity": "error", "line": 3, "column": 5,
 ///                     "message": "..."}]}
 ///
-/// Rows hold the tool's spelling of each column. A diagnostic without a file
-/// location has line and column 0.
-static void run(StringRef source, uint64_t budget, raw_ostream &os) {
+/// Rows hold the tool's spelling of each column, and `query` is null without a
+/// query. A diagnostic without a file location has line and column 0.
+static void run(StringRef source, uint64_t budget,
+                const std::optional<NamedQuery> &query, raw_ostream &os) {
   DialectRegistry registry;
   registerRunnerDialects(registry);
   MLIRContext context(registry);
@@ -80,22 +89,28 @@ static void run(StringRef source, uint64_t budget, raw_ostream &os) {
   llvm::SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(
       llvm::MemoryBuffer::getMemBuffer(source, "input.mlir"), llvm::SMLoc());
-  FailureOr<SmallVector<ReportRow>> rows = runMain(sourceMgr, context, budget);
+  FailureOr<RunReport> report = runMain(sourceMgr, context, budget, query);
 
   llvm::json::OStream json(os);
   json.object([&] {
     json.attributeArray("rows", [&] {
-      if (failed(rows))
+      if (failed(report))
         return;
-      for (const ReportRow &row : *rows) {
-        json.object([&] {
-          json.attribute("name", row.name);
-          json.attribute("evaluated", row.evaluated);
-          json.attribute("cache", row.cache);
-          json.attribute("status", row.status);
-        });
-      }
+      for (const ReportRow &row : report->rows)
+        json.object([&] { writeRow(json, row); });
     });
+    json.attributeBegin("query");
+    if (succeeded(report) && report->query) {
+      json.object([&] {
+        writeRow(json, *report->query);
+        json.attribute("position", query->position == QueryPosition::Before
+                                       ? "before"
+                                       : "after");
+      });
+    } else {
+      json.value(nullptr);
+    }
+    json.attributeEnd();
     json.attributeArray("diagnostics", [&] {
       for (const DiagnosticEntry &diag : diagnostics) {
         json.object([&] {
@@ -113,12 +128,18 @@ extern "C" {
 
 /// Runs `@main` in the NUL-terminated MLIR `source` and returns the report as
 /// NUL-terminated JSON, which the caller releases with
-/// `interpreter_free_report`.
-EMSCRIPTEN_KEEPALIVE char *interpreter_run(const char *source,
-                                           uint64_t budget) {
+/// `interpreter_free_report`. A non-null `queryName` also queries that result,
+/// before the rows if `queryBefore` is set and after them otherwise.
+EMSCRIPTEN_KEEPALIVE char *interpreter_run(const char *source, uint64_t budget,
+                                           const char *queryName,
+                                           bool queryBefore) {
+  std::optional<NamedQuery> query;
+  if (queryName)
+    query = NamedQuery{queryName, queryBefore ? QueryPosition::Before
+                                              : QueryPosition::After};
   std::string report;
   llvm::raw_string_ostream os(report);
-  run(source, budget, os);
+  run(source, budget, query, os);
   return strdup(report.c_str());
 }
 

@@ -7,6 +7,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace llvm {
@@ -33,16 +34,38 @@ struct ReportRow {
   StringRef status;
 };
 
+/// When a named query is made, relative to the rows of `@main`.
+enum class QueryPosition { Before, After };
+
+/// This struct represents a direct query of one value of `@main` by its source
+/// name: an operation result or a block argument. It is made through the same
+/// engine as the rows, so it shares their cache.
+struct NamedQuery {
+  /// The value's name in the source, e.g. `%b`, `%pair#1` for a result in a
+  /// group, or `%arg0` for a block argument.
+  std::string name;
+  QueryPosition position = QueryPosition::After;
+};
+
+/// This struct represents the report of a run.
+struct RunReport {
+  /// One row per result of `@main`, in source order.
+  SmallVector<ReportRow> rows;
+  /// The row of the named query, when one was requested.
+  std::optional<ReportRow> query;
+};
+
 /// Registers the dialects and evaluation models that runs support.
 void registerRunnerDialects(DialectRegistry &registry);
 
 /// Parses the main buffer of `sourceMgr` and queries every result of its
-/// `@main`, across all blocks and nested regions in source order. Each query
-/// gets `budget` steps, and all of them share one cache. Emits a diagnostic and
-/// fails when parsing fails or `@main` is missing or has no body.
-FailureOr<SmallVector<ReportRow>> runMain(llvm::SourceMgr &sourceMgr,
-                                          MLIRContext &context,
-                                          uint64_t budget);
+/// `@main`, across all blocks and nested regions in source order, plus `query`
+/// before or after them if given. Each query gets `budget` steps, and all of
+/// them share one cache. Emits a diagnostic and fails when parsing fails,
+/// `@main` is missing or has no body, or no value has the queried name.
+FailureOr<RunReport>
+runMain(llvm::SourceMgr &sourceMgr, MLIRContext &context, uint64_t budget,
+        const std::optional<NamedQuery> &query = std::nullopt);
 
 } // namespace mlir::interpreter
 

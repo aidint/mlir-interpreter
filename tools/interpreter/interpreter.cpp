@@ -29,6 +29,18 @@ static cl::opt<uint64_t>
     budget("budget", cl::desc("Evaluation step budget of each reported value"),
            cl::init(1000));
 
+static cl::opt<std::string> queryName(
+    "query",
+    cl::desc("Also query the value with this source name, e.g. %b or %arg0, "
+             "through the same engine, and print it in its own table"),
+    cl::value_desc("name"));
+
+static cl::opt<bool>
+    queryBefore("query-before",
+                cl::desc("Make the --query query before the rows instead of "
+                         "after them"),
+                cl::init(false));
+
 static cl::opt<bool> allowUnregisteredDialects(
     "allow-unregistered-dialect",
     cl::desc("Allow operations from unregistered dialects"), cl::init(false));
@@ -50,23 +62,42 @@ static void printColumn(raw_ostream &os, StringRef text, int width) {
   os.indent(std::max(width - llvm::sys::unicode::columnWidthUTF8(text), 1));
 }
 
-/// Runs `@main` of the module in `sourceMgr` and prints its report to `os`.
-static LogicalResult run(llvm::SourceMgr &sourceMgr, MLIRContext &context,
-                         raw_ostream &os) {
-  FailureOr<SmallVector<ReportRow>> rows = runMain(sourceMgr, context, budget);
-  if (failed(rows))
-    return failure();
-
+/// Prints `rows` as a table whose first column is headed `nameHeader`.
+static void printTable(raw_ostream &os, StringRef nameHeader,
+                       ArrayRef<ReportRow> rows) {
   constexpr int valueWidth = 8, evaluatedWidth = 12, cacheWidth = 9;
-  printColumn(os, "value", valueWidth);
+  printColumn(os, nameHeader, valueWidth);
   printColumn(os, "evaluated", evaluatedWidth);
   printColumn(os, "cache", cacheWidth);
   os << "status\n";
-  for (const ReportRow &row : *rows) {
+  for (const ReportRow &row : rows) {
     printColumn(os, row.name, valueWidth);
     printColumn(os, row.evaluated, evaluatedWidth);
     printColumn(os, row.cache, cacheWidth);
     os << row.status << "\n";
+  }
+}
+
+/// Runs `@main` of the module in `sourceMgr` and prints its report to `os`.
+/// A named query gets its own table, printed in the order it was made.
+static LogicalResult run(llvm::SourceMgr &sourceMgr, MLIRContext &context,
+                         raw_ostream &os) {
+  std::optional<NamedQuery> query;
+  if (!queryName.empty())
+    query = NamedQuery{queryName, queryBefore ? QueryPosition::Before
+                                              : QueryPosition::After};
+  FailureOr<RunReport> report = runMain(sourceMgr, context, budget, query);
+  if (failed(report))
+    return failure();
+
+  if (query && query->position == QueryPosition::Before) {
+    printTable(os, "query", *report->query);
+    os << "\n";
+  }
+  printTable(os, "value", report->rows);
+  if (query && query->position == QueryPosition::After) {
+    os << "\n";
+    printTable(os, "query", *report->query);
   }
   return success();
 }
