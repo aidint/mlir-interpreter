@@ -5,6 +5,7 @@ target_link_libraries(interpreter PRIVATE
   InterpreterArith
   InterpreterBuiltin
   MLIRArithDialect
+  MLIRAsmParser
   MLIRControlFlowDialect
   MLIRFuncDialect
   MLIRIndexDialect

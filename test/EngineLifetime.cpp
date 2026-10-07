@@ -59,8 +59,8 @@ public:
   const APInt &getValue() const { return getImpl()->value; }
 };
 
-struct SubIOpEval
-    : EvaluableOpInterface::ExternalModel<SubIOpEval, arith::SubIOp> {
+struct XOrIOpEval
+    : EvaluableOpInterface::ExternalModel<XOrIOpEval, arith::XOrIOp> {
   SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
     Answer lhs = scope.query(op->getOperand(0));
     if (lhs.status != EvalStatus::Completed)
@@ -73,7 +73,7 @@ struct SubIOpEval
     const APInt &lhsInt = cast<IntEvalValue>(*lhs.getValue()).getValue();
     const APInt &rhsInt = cast<IntEvalValue>(*rhs.getValue()).getValue();
     return {{EvalStatus::Completed,
-             TrackedEvalValue::get(scope.getAllocator(), lhsInt - rhsInt)}};
+             TrackedEvalValue::get(scope.getAllocator(), lhsInt ^ rhsInt)}};
   }
 
   bool isCacheable(Operation *) const { return false; }
@@ -85,8 +85,8 @@ func.func @f() -> (i32, i32) {
   %c2 = arith.constant 2 : i32
   %c9 = arith.constant 9 : i32
   %c3 = arith.constant 3 : i32
-  %a = arith.subi %c7, %c2 : i32
-  %b = arith.subi %c9, %c3 : i32
+  %a = arith.xori %c7, %c2 : i32
+  %b = arith.xori %c9, %c3 : i32
   return %a, %b : i32, i32
 }
 )mlir";
@@ -107,7 +107,7 @@ int main() {
   registerArithEvalExternalModels(registry);
   registerBuiltinAttrEvalExternalModels(registry);
   registry.addExtension(+[](MLIRContext *ctx, arith::ArithDialect *) {
-    arith::SubIOp::attachInterface<SubIOpEval>(*ctx);
+    arith::XOrIOp::attachInterface<XOrIOpEval>(*ctx);
   });
 
   MLIRContext context(registry);
@@ -121,7 +121,7 @@ int main() {
   SmallVector<Value> uncached;
   SmallVector<Value> constants;
   module->walk([&](Operation *op) {
-    if (isa<arith::SubIOp>(op))
+    if (isa<arith::XOrIOp>(op))
       uncached.push_back(op->getResult(0));
     else if (isa<arith::ConstantOp>(op))
       constants.push_back(op->getResult(0));
@@ -146,7 +146,7 @@ int main() {
 
     Answer second = engine.query(uncached[1]);
     CHECK(second.status == EvalStatus::Completed);
-    CHECK(getTracked(second) && *getTracked(second) == 6);
+    CHECK(getTracked(second) && *getTracked(second) == 10);
     CHECK(liveTracked == 2);
 
     CHECK(getTracked(first) && *getTracked(first) == 5);

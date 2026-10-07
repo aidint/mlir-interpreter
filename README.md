@@ -28,24 +28,145 @@ ctest --test-dir build/debug
     (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
-- `test/`: example MLIR inputs and `engine-lifetime`, a C++ regression for
-  allocator lifetimes.
+- `examples/`: MLIR modules for the tool, each with its `.expected` report,
+  which CTest checks.
+- `test/`: C++ regressions: `engine-lifetime` for allocator lifetimes and
+  `eval-cache` for the cache.
 
 ## interpreter
 
-Parses an MLIR file and queries every op result:
+Runs `func.func @main()` of an MLIR file. It queries every result in `@main`'s
+body in order through one engine, so all queries share one cache, and prints
+one row per result:
+
+- `evaluated`: the value, `unknown`, or `—` when the query didn't complete.
+- `cache`: the outcome of the lookup for that result's own operation, not for
+  nested queries. It shows `hit` or `miss` when the lookup completes, and `—`
+  when the operation isn't cached (constants, operations without an evaluation
+  function) or hashing ran out first. A query can miss and then exhaust.
+- `status`: `completed`, `exhausted`, `needs order` or `cycle`.
+
+`@main` must be straight-line code without arguments or calls; anything else
+is diagnosed.
+
+`--budget=N` (default 1000) is the step budget of each reported value: it is
+reset for every row, while the cache is kept for the whole run. Hashing,
+equality and evaluation share that budget. A hit can still spend budget
+computing its key, since keys hold evaluated operands, and constants are not
+cached across queries, so each query pays a step per constant it reaches.
+
+Other options: `--allow-unregistered-dialect`.
+
+### Examples
+
+`arith.addi`, `arith.muli` and `arith.subi` are keyed by their kind, result
+type, overflow flags and evaluated operands. Addition and multiplication also
+match swapped operands. Each example explains its rows in comments.
 
 ```sh
-$ build/debug/tools/interpreter/interpreter test/query.mlir
-%c1 -> 1
-...
+$ build/debug/tools/interpreter/interpreter examples/01-basic.mlir
+value   evaluated   cache    status
+%c6     6           —        completed
+%c4     4           —        completed
+%sum    10          miss     completed
+%prod   24          miss     completed
+%diff   2           miss     completed
 ```
 
-Options: `--budget=<steps>`, `--allow-unregistered-dialect`.
+Equal operand values hit, even when one is computed and the other a constant:
 
-It registers the `func`, `arith`, `cf`, `scf`, `math` and `ub` dialects. To
-support more, add them in `tools/interpreter/interpreter.cpp` and link
-the matching `MLIR*Dialect` libraries in its `CMakeLists.txt`.
+```sh
+$ build/debug/tools/interpreter/interpreter examples/02-equal-values.mlir
+value   evaluated   cache    status
+%c2     2           —        completed
+%c3     3           —        completed
+%two    2           —        completed
+%three  3           —        completed
+%c5     5           —        completed
+%a      5           miss     completed
+%b      5           hit      completed
+%c      10          miss     completed
+%d      10          hit      completed
+%e      2           miss     completed
+%f      2           hit      completed
+```
+
+Swapped operands hit for addition and multiplication, but not subtraction:
+
+```sh
+$ build/debug/tools/interpreter/interpreter examples/03-swapped-operands.mlir
+value   evaluated   cache    status
+%c2     2           —        completed
+%c3     3           —        completed
+%two    2           —        completed
+%a      5           miss     completed
+%b      5           hit      completed
+%c      6           miss     completed
+%d      6           hit      completed
+%e      1           miss     completed
+%f      -1          miss     completed
+%g      0           miss     completed
+%h      0           hit      completed
+```
+
+Changing an operand value, the kind, the result type or the overflow flags
+misses:
+
+```sh
+$ build/debug/tools/interpreter/interpreter examples/04-key-changes.mlir
+value   evaluated   cache    status
+%c2     2           —        completed
+%c3     3           —        completed
+%c4     4           —        completed
+%c2_i64 2           —        completed
+%c3_i64 3           —        completed
+%a      5           miss     completed
+%b      6           miss     completed
+%c      6           miss     completed
+%d      5           miss     completed
+%e      5           miss     completed
+%f      5           hit      completed
+```
+
+A known zero keys a product without its other operand, so `%p` fits in 2 steps
+and every product with a zero shares one entry:
+
+```sh
+$ build/debug/tools/interpreter/interpreter --budget=2 examples/05-zero-product.mlir
+value   evaluated   cache    status
+%c0     0           —        completed
+%zero   0           —        completed
+%c7     7           —        completed
+%c9     9           —        completed
+%p      0           miss     completed
+%q      0           hit      completed
+%r      0           hit      completed
+%s      —           miss     exhausted
+```
+
+Unknown operands fall back to the operation's identity, and a small budget
+runs out either after the lookup (`miss`) or during hashing (`—`):
+
+```sh
+$ build/debug/tools/interpreter/interpreter --budget=3 examples/06-unknown-and-budget.mlir
+value   evaluated   cache    status
+%c1     1           —        completed
+%c2     2           —        completed
+%c3     3           —        completed
+%c4     4           —        completed
+%u      unknown     —        completed
+%a      unknown     miss     completed
+%b      unknown     miss     completed
+%s      3           miss     completed
+%h      3           hit      completed
+%e      —           miss     exhausted
+%t      7           miss     completed
+%f      —           —        exhausted
+```
+
+The tool registers the `func`, `arith`, `cf`, `scf`, `index` and `ub` dialects.
+To support more, add them in `tools/interpreter/interpreter.cpp` and link the
+matching `MLIR*Dialect` libraries in its `CMakeLists.txt`.
 
 ## Updating LLVM
 
