@@ -9,9 +9,13 @@ const budgetInput = $('budget');
 const exampleSelect = $('example');
 const runButton = $('run');
 const cancelButton = $('cancel');
+const queryForm = $('query-form');
+const queryName = $('query-name');
+const queryButton = $('query');
 const statusLine = $('status');
 const report = $('report');
 const rowsBody = $('rows');
+const queryBodies = { before: $('query-before'), after: $('query-after') };
 const diagnosticsList = $('diagnostics');
 const empty = $('empty');
 const summary = $('summary');
@@ -35,6 +39,7 @@ function setStatus(text, state) {
 
 function updateButtons() {
   runButton.disabled = !ready || runningId !== 0;
+  queryButton.disabled = runButton.disabled;
   cancelButton.disabled = runningId === 0;
 }
 
@@ -90,7 +95,7 @@ const handlers = {
     if (id !== runningId)
       return;
     finishRun();
-    render({ rows: [], diagnostics: [] });
+    render({ rows: [], query: null, diagnostics: [] });
     setStatus(`The interpreter crashed (${message}) and was restarted.`, 'error');
     restartWorker();
   },
@@ -117,7 +122,8 @@ function readBudget() {
   return valid ? text : null;
 }
 
-function run() {
+// Runs `@main`, and also `query` ({name, before}) if given.
+function run(query = null) {
   if (!ready) {
     runWhenReady = true;
     return;
@@ -134,8 +140,23 @@ function run() {
   runningId = ++lastId;
   updateButtons();
   report.classList.add('stale');
-  setStatus('Running…', 'running');
-  worker.postMessage({ id: runningId, source: source.value, budget });
+  setStatus(query ? `Running with a query of ${query.name}…` : 'Running…',
+            'running');
+  worker.postMessage({ id: runningId, source: source.value, budget, query });
+}
+
+function runQuery() {
+  let name = queryName.value.trim();
+  if (!name) {
+    setStatus('Enter the name of a result to query, like %b.', 'error');
+    queryName.focus();
+    return;
+  }
+  if (!name.startsWith('%'))
+    name = `%${name}`;
+  queryName.value = name;
+  const before = queryForm.elements['query-position'].value === 'before';
+  run({ name, before });
 }
 
 function cancel() {
@@ -197,8 +218,25 @@ function renderDiagnostic(diag) {
   return li;
 }
 
-function render({ rows, diagnostics }) {
+// Renders the direct query in its own group, above or below the rows in the
+// order it was made.
+function renderQuery(query) {
+  for (const body of Object.values(queryBodies))
+    body.replaceChildren();
+  if (!query)
+    return;
+  const label = document.createElement('tr');
+  const td = cell(`Direct query, ${query.position} the run`, 'label');
+  td.colSpan = 4;
+  label.append(td);
+  const row = renderRow(query);
+  row.className = 'query';
+  queryBodies[query.position].append(label, row);
+}
+
+function render({ rows, query, diagnostics }) {
   rowsBody.replaceChildren(...rows.map(renderRow));
+  renderQuery(query);
   diagnosticsList.replaceChildren(...diagnostics.map(renderDiagnostic));
   empty.hidden = rows.length > 0 || diagnostics.length > 0;
   if (!rows.length) {
@@ -270,7 +308,12 @@ async function loadExamples() {
     await loadExample(examples[0]);
 }
 
-runButton.onclick = run;
+runButton.onclick = () => run();
+queryForm.onsubmit = (event) => {
+  event.preventDefault();
+  if (!queryButton.disabled)
+    runQuery();
+};
 cancelButton.onclick = cancel;
 budgetInput.oninput = readBudget;
 source.onkeydown = (event) => {

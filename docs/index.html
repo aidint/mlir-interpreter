@@ -52,10 +52,24 @@
         <h2 id="report-title">Report</h2>
         <span id="summary" class="hint"></span>
       </header>
+      <form id="query-form" class="query-bar" aria-label="Direct query">
+        <label class="query-name">
+          <span>Query</span>
+          <input id="query-name" type="text" placeholder="%b" autocomplete="off" spellcheck="false" autocapitalize="off">
+        </label>
+        <fieldset class="segmented">
+          <legend class="visually-hidden">When to query</legend>
+          <label><input type="radio" name="query-position" value="before"><span>before run</span></label>
+          <label><input type="radio" name="query-position" value="after" checked><span>after run</span></label>
+        </fieldset>
+        <button id="query" class="secondary" type="submit" disabled>Query</button>
+      </form>
       <div id="report" class="report">
         <table>
           <thead><tr><th>value</th><th>evaluated</th><th>cache</th><th>status</th></tr></thead>
+          <tbody id="query-before" class="query-group"></tbody>
           <tbody id="rows"></tbody>
+          <tbody id="query-after" class="query-group"></tbody>
         </table>
         <p id="empty" class="empty">Run the module to see one row per result.</p>
         <ul id="diagnostics" class="diagnostics"></ul>
@@ -75,6 +89,12 @@
       <p><b>hit</b> or <b>miss</b> is the lookup for the result's own operation.
       <b>—</b> means the operation isn't cached, like a constant, or hashing ran out
       of budget first.</p>
+    </div>
+    <div>
+      <h3>Direct query</h3>
+      <p>Queries one value by name, a result or a block argument, before or
+      after all of <code>@main</code>'s rows. It uses the same engine and budget
+      per value, so it shares their cache. Every Query is a fresh run.</p>
     </div>
     <div>
       <h3>Control flow</h3>
