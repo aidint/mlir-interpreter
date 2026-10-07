@@ -429,7 +429,6 @@ td.unknown { color: var(--muted); font-style: italic; }
 
 @media (max-width: 860px) {
   .page { padding: 40px 16px 48px; }
-  h1 br { display: none; }
   .toolbar { margin-top: 32px; }
   .status { margin-left: 0; width: 100%; min-height: 0; }
   .columns { grid-template-columns: minmax(0, 1fr); }
