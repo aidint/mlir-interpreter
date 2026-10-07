@@ -1,6 +1,0 @@
-value   evaluated   cache    status
-%c6     6           —        completed
-%c4     4           —        completed
-%sum    10          miss     completed
-%prod   24          miss     completed
-%diff   2           miss     completed

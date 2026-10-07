@@ -15,7 +15,14 @@ Only the LLVM/MLIR libraries our targets link against are built. The first
 build takes a few minutes. After that, ccache makes rebuilds fast.
 
 ```sh
-ctest --test-dir build/debug
+cmake --build --preset debug --target check-interpreter
+```
+
+Tests run through `lit` and `FileCheck` from the submodule, like MLIR's own.
+To run one test:
+
+```sh
+build/debug/third_party/llvm-project/llvm/bin/llvm-lit build/debug/examples/05-zero-product.mlir
 ```
 
 ## Layout
@@ -28,10 +35,10 @@ ctest --test-dir build/debug
     (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
-- `examples/`: MLIR modules for the tool, each with its `.expected` report,
-  which CTest checks.
-- `test/`: C++ regressions: `engine-lifetime` for allocator lifetimes and
-  `eval-cache` for the cache.
+- `examples/`: MLIR modules for the tool. Each checks its own report with
+  `RUN` and `CHECK` lines.
+- `test/`: the shared `lit` config, tool tests, and the C++ regressions
+  `engine-lifetime` (allocator lifetimes) and `eval-cache` (the cache).
 
 ## interpreter
 
@@ -55,7 +62,8 @@ equality and evaluation share that budget. A hit can still spend budget
 computing its key, since keys hold evaluated operands, and constants are not
 cached across queries, so each query pays a step per constant it reaches.
 
-Other options: `--allow-unregistered-dialect`.
+Other options: `--allow-unregistered-dialect`, and `--split-input-file` and
+`--verify-diagnostics`, which work as in `mlir-opt`.
 
 ### Examples
 

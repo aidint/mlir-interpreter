@@ -1,0 +1,2 @@
+# Checks that answers outlive later queries and are freed with their engine.
+RUN: engine-lifetime-test

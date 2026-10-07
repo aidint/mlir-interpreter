@@ -12,11 +12,13 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/FileUtilities.h"
+#include "mlir/Support/ToolUtilities.h"
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
@@ -44,6 +46,16 @@ static cl::opt<uint64_t>
 static cl::opt<bool> allowUnregisteredDialects(
     "allow-unregistered-dialect",
     cl::desc("Allow operations from unregistered dialects"), cl::init(false));
+
+static cl::opt<bool> splitInputFile(
+    "split-input-file",
+    cl::desc("Run each chunk of the input, split at '// -----', on its own"),
+    cl::init(false));
+
+static cl::opt<bool> verifyDiagnostics(
+    "verify-diagnostics",
+    cl::desc("Check that emitted diagnostics match expected-* comments"),
+    cl::init(false));
 
 /// Returns `@main` if it is a straight-line function without arguments or
 /// calls, the only entry points the runner supports so far.
@@ -118,50 +130,26 @@ static StringRef printCacheOutcome(CacheOutcome outcome) {
   llvm_unreachable("unhandled CacheOutcome");
 }
 
-int main(int argc, char **argv) {
-  llvm::InitLLVM initLLVM(argc, argv);
-  cl::ParseCommandLineOptions(
-      argc, argv,
-      "Query every result in @main in order, reporting cache outcomes\n");
-
-  DialectRegistry registry;
-  registry
-      .insert<arith::ArithDialect, cf::ControlFlowDialect, func::FuncDialect,
-              index::IndexDialect, scf::SCFDialect, ub::UBDialect>();
-  registerArithEvalExternalModels(registry);
-  registerBuiltinAttrEvalExternalModels(registry);
-
-  MLIRContext context(registry);
-  context.allowUnregisteredDialects(allowUnregisteredDialects);
-  context.printOpOnDiagnostic(false);
-
-  std::string errorMessage;
-  auto input = openInputFile(inputFilename, &errorMessage);
-  if (!input) {
-    llvm::errs() << errorMessage << "\n";
-    return 1;
-  }
-
-  llvm::SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(input), llvm::SMLoc());
-  SourceMgrDiagnosticHandler diagHandler(sourceMgr, &context);
-
+/// Runs `@main` of the module in `sourceMgr` and prints its report to `os`.
+static LogicalResult run(llvm::SourceMgr &sourceMgr, MLIRContext &context,
+                         raw_ostream &os) {
   // Parsing records the source ranges of SSA names, so rows can show them.
   Block block;
   AsmParserState parserState;
   if (failed(parseAsmSourceFile(sourceMgr, &block, ParserConfig(&context),
                                 &parserState)))
-    return 1;
+    return failure();
+  StringRef bufferName = sourceMgr.getMemoryBuffer(sourceMgr.getMainFileID())
+                             ->getBufferIdentifier();
   OwningOpRef<ModuleOp> module =
       mlir::detail::constructContainerOpForParserIfNecessary<ModuleOp>(
           &block, &context,
-          FileLineColLoc::get(&context, inputFilename, /*line=*/1,
-                              /*column=*/1));
+          FileLineColLoc::get(&context, bufferName, /*line=*/1, /*column=*/1));
   if (!module)
-    return 1;
+    return failure();
   FailureOr<func::FuncOp> main = getEntryPoint(*module);
   if (failed(main))
-    return 1;
+    return failure();
 
   EvalContext evalContext(&context);
   registerBuiltinEvalValues(evalContext);
@@ -170,7 +158,6 @@ int main(int argc, char **argv) {
   Engine engine(evalContext, budget);
 
   constexpr int valueWidth = 8, evaluatedWidth = 12, cacheWidth = 9;
-  raw_ostream &os = llvm::outs();
   printColumn(os, "value", valueWidth);
   printColumn(os, "evaluated", evaluatedWidth);
   printColumn(os, "cache", cacheWidth);
@@ -186,5 +173,55 @@ int main(int argc, char **argv) {
       os << stringifyEvalStatus(answer.status) << "\n";
     }
   }
-  return 0;
+  return success();
+}
+
+/// Runs one chunk of the input in its own context. Under
+/// `--verify-diagnostics`, succeeds when the diagnostics match the chunk's
+/// `expected-*` comments instead.
+static LogicalResult runChunk(std::unique_ptr<llvm::MemoryBuffer> chunk,
+                              DialectRegistry &registry, raw_ostream &os) {
+  llvm::SourceMgr sourceMgr;
+  sourceMgr.AddNewSourceBuffer(std::move(chunk), llvm::SMLoc());
+  MLIRContext context(registry);
+  context.allowUnregisteredDialects(allowUnregisteredDialects);
+  context.printOpOnDiagnostic(false);
+  if (verifyDiagnostics) {
+    SourceMgrDiagnosticVerifierHandler handler(sourceMgr, &context);
+    (void)run(sourceMgr, context, os);
+    return handler.verify();
+  }
+  SourceMgrDiagnosticHandler handler(sourceMgr, &context);
+  return run(sourceMgr, context, os);
+}
+
+int main(int argc, char **argv) {
+  llvm::InitLLVM initLLVM(argc, argv);
+  cl::ParseCommandLineOptions(
+      argc, argv,
+      "Query every result in @main in order, reporting cache outcomes\n");
+
+  DialectRegistry registry;
+  registry
+      .insert<arith::ArithDialect, cf::ControlFlowDialect, func::FuncDialect,
+              index::IndexDialect, scf::SCFDialect, ub::UBDialect>();
+  registerArithEvalExternalModels(registry);
+  registerBuiltinAttrEvalExternalModels(registry);
+
+  std::string errorMessage;
+  auto input = openInputFile(inputFilename, &errorMessage);
+  if (!input) {
+    llvm::errs() << errorMessage << "\n";
+    return 1;
+  }
+
+  auto processChunk = [&](std::unique_ptr<llvm::MemoryBuffer> chunk,
+                          raw_ostream &os) {
+    return runChunk(std::move(chunk), registry, os);
+  };
+  return failed(
+             splitAndProcessBuffer(std::move(input), processChunk, llvm::outs(),
+                                   splitInputFile ? kDefaultSplitMarker : ""))
+             ? 1
+             : 0;
 }

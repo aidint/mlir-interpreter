@@ -37,6 +37,7 @@ public:
   Answer query(Value value);
   /// Queries `value` and sets `outcome` to the lookup outcome of its own
   /// operation; lookups made by nested queries don't affect it.
+  // TODO: Remove `CacheOutcome` in favor of a better way to report lookups.
   Answer query(Value value, CacheOutcome &outcome);
   FailureOr<func::FuncOp> specialize(func::CallOp call,
                                      ArrayRef<std::optional<EvalValue>> args);
@@ -51,6 +52,7 @@ private:
   Answer evaluate(Value value);
   /// Computes the answer for `value`, setting `outcome`, if given, to the
   /// lookup outcome of its operation.
+  // TODO: Remove `CacheOutcome` in favor of a better way to report lookups.
   Answer compute(Value value, CacheOutcome *outcome = nullptr);
 
   EvalContext &ctx;
