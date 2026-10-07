@@ -15,7 +15,6 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/ToolUtilities.h"
@@ -57,24 +56,13 @@ static cl::opt<bool> verifyDiagnostics(
     cl::desc("Check that emitted diagnostics match expected-* comments"),
     cl::init(false));
 
-/// Returns `@main` if it is a straight-line function without arguments or
-/// calls, the only entry points the runner supports so far.
+/// Returns `@main` if it has a body to run.
 static FailureOr<func::FuncOp> getEntryPoint(ModuleOp module) {
   auto main = module.lookupSymbol<func::FuncOp>("main");
   if (!main)
     return emitError(module.getLoc(), "no 'func.func @main' entry point");
   if (main.isExternal())
     return main.emitError("entry point has no body");
-  if (main.getNumArguments() != 0)
-    return main.emitError("entry point must not take arguments");
-  if (!main.getBody().hasOneBlock())
-    return main.emitError("control flow is not supported");
-  for (Operation &op : main.getBody().front()) {
-    if (isa<CallOpInterface>(op))
-      return op.emitError("calls are not supported");
-    if (op.getNumRegions() != 0 || op.getNumSuccessors() != 0)
-      return op.emitError("control flow is not supported");
-  }
   return main;
 }
 
@@ -113,8 +101,13 @@ static std::string printEvaluated(const Answer &answer) {
   const auto &value = answer.getValue();
   if (!value)
     return "unknown";
-  if (auto integer = dyn_cast<IntEvalValue>(*value))
-    return llvm::toString(integer.getValue(), 10, /*Signed=*/true);
+  if (auto integer = dyn_cast<IntEvalValue>(*value)) {
+    const APInt &bits = integer.getValue();
+    // Printed as signed, an i1 `true` would read as -1.
+    if (bits.getBitWidth() == 1)
+      return bits.isOne() ? "true" : "false";
+    return llvm::toString(bits, 10, /*Signed=*/true);
+  }
   return "known";
 }
 
@@ -163,8 +156,10 @@ static LogicalResult run(llvm::SourceMgr &sourceMgr, MLIRContext &context,
   printColumn(os, "cache", cacheWidth);
   os << "status\n";
 
-  for (Operation &op : main->getBody().front()) {
-    for (OpResult result : op.getResults()) {
+  // Every block and nested region is reported in source order. Values are
+  // queried on demand, so a row doesn't depend on which branch would run.
+  main->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    for (OpResult result : op->getResults()) {
       CacheOutcome outcome;
       Answer answer = engine.query(result, outcome);
       printColumn(os, getSourceName(result, parserState), valueWidth);
@@ -172,7 +167,7 @@ static LogicalResult run(llvm::SourceMgr &sourceMgr, MLIRContext &context,
       printColumn(os, printCacheOutcome(outcome), cacheWidth);
       os << stringifyEvalStatus(answer.status) << "\n";
     }
-  }
+  });
   return success();
 }
 

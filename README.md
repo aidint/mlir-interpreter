@@ -42,9 +42,9 @@ build/debug/third_party/llvm-project/llvm/bin/llvm-lit build/debug/examples/05-z
 
 ## interpreter
 
-Runs `func.func @main()` of an MLIR file. It queries every result in `@main`'s
-body in order through one engine, so all queries share one cache, and prints
-one row per result:
+Runs `func.func @main` of an MLIR file. It queries every result in `@main`,
+across all blocks and nested regions in source order, through one engine, so
+all queries share one cache. It prints one row per result:
 
 - `evaluated`: the value, `unknown`, or `—` when the query didn't complete.
 - `cache`: the outcome of the lookup for that result's own operation, not for
@@ -53,8 +53,10 @@ one row per result:
   function) or hashing ran out first. A query can miss and then exhaust.
 - `status`: `completed`, `exhausted`, `needs order` or `cycle`.
 
-`@main` must be straight-line code without arguments or calls; anything else
-is diagnosed.
+Values are queried on demand, so a row doesn't depend on which branch would
+run. Block arguments, including `@main`'s, and results of ops without an
+evaluation function (`scf.if`, `func.call`, ...) are `unknown`. The tool reports
+an error only when there is no `@main` or it has no body.
 
 `--budget=N` (default 1000) is the step budget of each reported value: it is
 reset for every row, while the cache is kept for the whole run. Hashing,
