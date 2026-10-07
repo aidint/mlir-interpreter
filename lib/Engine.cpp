@@ -41,13 +41,21 @@ Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
 } // namespace
 
 Answer Engine::query(Value value) {
+  CacheOutcome outcome;
+  return query(value, outcome);
+}
+
+Answer Engine::query(Value value, CacheOutcome &outcome) {
   assert(!queryAllocator &&
          "cannot start a query while another query is active");
   remaining = budget;
   ctx.getCache().beginQuery();
   answerAllocator.beginRetaining();
   queryAllocator.emplace(ctx, false);
-  Answer answer = evaluate(value);
+  // Nothing is memoized yet, so `value` goes straight to `compute`, which
+  // reports the lookup of its operation.
+  outcome = CacheOutcome::None;
+  Answer answer = compute(value, &outcome);
   if (const auto &value = answer.getValue())
     answer.value = answerAllocator.retain(*value);
   queryAllocator.reset();
@@ -69,7 +77,7 @@ Answer Engine::evaluate(Value value) {
   return answer;
 }
 
-Answer Engine::compute(Value value) {
+Answer Engine::compute(Value value, CacheOutcome *outcome) {
   Answer unknown{EvalStatus::Completed, std::nullopt};
   auto result = dyn_cast<OpResult>(value);
   if (!result)
@@ -96,9 +104,14 @@ Answer Engine::compute(Value value) {
       return {lookup.status, std::nullopt};
     assert(lookup.getValue() && "completed lookup must provide a key");
     cached = *lookup.getValue();
+    // An entry can hold an answer for a sibling result only, which is a miss.
+    std::optional<Answer> hit;
     if (cached->entry)
-      if (auto &answer = cached->entry->results[result.getResultNumber()])
-        return *answer;
+      hit = cached->entry->results[result.getResultNumber()];
+    if (outcome)
+      *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
+    if (hit)
+      return *hit;
   }
 
   // The step is charged before `evaluate` queries the operands it needs.

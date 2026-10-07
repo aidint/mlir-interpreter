@@ -1,0 +1,2 @@
+# Checks cache lookup, insertion and partial entries.
+RUN: eval-cache-test

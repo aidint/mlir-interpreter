@@ -32,7 +32,6 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
-enable_testing()
 add_subdirectory(test)
 
 # Expose compile_commands.json at the repo root for clangd.

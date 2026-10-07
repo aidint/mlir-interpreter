@@ -1,0 +1,14 @@
+# -*- Python -*-
+
+config.name = "@LIT_SUITE_NAME@"
+config.test_source_root = "@LIT_SOURCE_DIR@"
+config.test_exec_root = "@LIT_BINARY_DIR@"
+config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
+config.interpreter_tools_dirs = "@INTERPRETER_TOOLS_DIRS@".split(";")
+
+import lit.llvm
+
+lit.llvm.initialize(lit_config, config)
+
+# Let the shared config do the real work.
+lit_config.load_config(config, "@PROJECT_SOURCE_DIR@/test/lit.cfg.py")
