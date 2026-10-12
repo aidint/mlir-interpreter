@@ -37,14 +37,14 @@ SmallVector<Answer>
 evaluateKnown(Operation *op, EvalScope &scope,
               function_ref<APInt(const APInt &, const APInt &)> fn) {
   Answer lhs = scope.query(op->getOperand(0));
-  if (lhs.status != EvalStatus::Completed)
-    return propagateSignal(op, lhs);
+  if (!lhs.completed())
+    return lhs.propagate(op);
   const APInt *lhsInt = getInt(lhs);
   if (!lhsInt)
     return {unknown()};
   Answer rhs = scope.query(op->getOperand(1));
-  if (rhs.status != EvalStatus::Completed)
-    return propagateSignal(op, rhs);
+  if (!rhs.completed())
+    return rhs.propagate(op);
   const APInt *rhsInt = getInt(rhs);
   if (!rhsInt)
     return {unknown()};
@@ -86,8 +86,8 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
   BinaryKey zero{nullptr, /*zeroProduct=*/true};
 
   Answer lhs = queryKeyOperand(op, 0, scope);
-  if (lhs.status != EvalStatus::Completed)
-    return {lhs.status, std::nullopt};
+  if (!lhs.completed())
+    return lhs.status;
   if (product && isZero(lhs))
     return {EvalStatus::Completed, zero};
   // A product still queries its right operand, which may be zero.
@@ -95,8 +95,8 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
     return {EvalStatus::Completed, identity};
 
   Answer rhs = queryKeyOperand(op, 1, scope);
-  if (rhs.status != EvalStatus::Completed)
-    return {rhs.status, std::nullopt};
+  if (!rhs.completed())
+    return rhs.status;
   if (product && isZero(rhs))
     return {EvalStatus::Completed, zero};
   if (!lhs.getValue() || !rhs.getValue())
@@ -113,8 +113,8 @@ template <typename ConcreteModel, typename OpT>
 struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
   EvalResult<llvm::hash_code> getHash(Operation *op, EvalScope &scope) const {
     auto key = getKey(op, scope);
-    if (key.status != EvalStatus::Completed)
-      return {key.status, std::nullopt};
+    if (!key.completed())
+      return key.status;
     const BinaryKey &k = *key.getValue();
     if (k.identity)
       return {EvalStatus::Completed, llvm::hash_value(k.identity)};
@@ -137,11 +137,11 @@ struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
         getOverflowFlags(op) != getOverflowFlags(other))
       return {EvalStatus::Completed, false};
     auto key = getKey(op, scope);
-    if (key.status != EvalStatus::Completed)
-      return {key.status, std::nullopt};
+    if (!key.completed())
+      return key.status;
     auto otherKey = getKey(other, scope);
-    if (otherKey.status != EvalStatus::Completed)
-      return {otherKey.status, std::nullopt};
+    if (!otherKey.completed())
+      return otherKey.status;
     const BinaryKey &a = *key.getValue();
     const BinaryKey &b = *otherKey.getValue();
     if (a.identity || b.identity)
@@ -177,14 +177,14 @@ struct MulIOpEval : BinaryOpEval<MulIOpEval, arith::MulIOp> {
   SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
     // A zero operand decides the product, so the other one is never queried.
     Answer lhs = scope.query(op->getOperand(0));
-    if (lhs.status != EvalStatus::Completed)
-      return propagateSignal(op, lhs);
+    if (!lhs.completed())
+      return lhs.propagate(op);
     const APInt *lhsInt = getInt(lhs);
     if (lhsInt && lhsInt->isZero())
       return {lhs};
     Answer rhs = scope.query(op->getOperand(1));
-    if (rhs.status != EvalStatus::Completed)
-      return propagateSignal(op, rhs);
+    if (!rhs.completed())
+      return rhs.propagate(op);
     const APInt *rhsInt = getInt(rhs);
     if (rhsInt && rhsInt->isZero())
       return {rhs};

@@ -29,7 +29,7 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
                 $_op.getOperation() == other};
       }]>,
     InterfaceMethod<
-      "Returns one answer per result. Operands are queried through `scope`, and a signal from one must be propagated, e.g. with `propagateSignal`.",
+      "Returns one answer per result. Operands are queried through `scope`, and a signal from one must be propagated, e.g. with `Answer::propagate`.",
       "::llvm::SmallVector<::mlir::interpreter::Answer>", "evaluate",
       (ins "::mlir::interpreter::EvalScope &":$scope)>,
     InterfaceMethod<

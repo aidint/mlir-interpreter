@@ -24,7 +24,7 @@ CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
     // A signal only means this candidate can't be compared now; another
     // candidate, or evaluation, may still answer.
     auto equal = op.isEqual(entry->op, scope);
-    if (equal.status != EvalStatus::Completed)
+    if (!equal.completed())
       continue;
     assert(equal.getValue() && "completed equality must provide a result");
     if (*equal.getValue())
@@ -36,8 +36,8 @@ EvalResult<CacheLookup> EvalCache::lookup(Operation *op, EvalScope &scope) {
   auto evaluable = cast<EvaluableOpInterface>(op);
   auto hash = evaluable.getHash(scope);
   const auto &hashValue = hash.getValue();
-  if (hash.status != EvalStatus::Completed)
-    return {hash.status, std::nullopt};
+  if (!hash.completed())
+    return hash.status;
   assert(hashValue && "completed hashing must provide a hash");
   CacheLookup result{*hashValue, nullptr, 0};
   result.entry = findEquivalent(evaluable, result.key, result.searched, scope);
@@ -72,9 +72,9 @@ void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
   assert(answers.size() == entry->results.size() &&
          "cache filling requires one answer per result");
   for (auto [slot, answer] : llvm::zip(entry->results, answers)) {
-    assert((answer.status == EvalStatus::Completed || !answer.value) &&
+    assert((answer.completed() || !answer.value) &&
            "incomplete evaluations cannot have a value");
-    if (slot || answer.status != EvalStatus::Completed)
+    if (slot || !answer.completed())
       continue;
     Answer retained = answer;
     if (const auto &value = answer.getValue())

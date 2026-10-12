@@ -63,11 +63,11 @@ struct XOrIOpEval
     : EvaluableOpInterface::ExternalModel<XOrIOpEval, arith::XOrIOp> {
   SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
     Answer lhs = scope.query(op->getOperand(0));
-    if (lhs.status != EvalStatus::Completed)
-      return propagateSignal(op, lhs);
+    if (!lhs.completed())
+      return lhs.propagate(op);
     Answer rhs = scope.query(op->getOperand(1));
-    if (rhs.status != EvalStatus::Completed)
-      return propagateSignal(op, rhs);
+    if (!rhs.completed())
+      return rhs.propagate(op);
     if (!lhs.getValue() || !rhs.getValue())
       return {{EvalStatus::Completed, std::nullopt}};
     const APInt &lhsInt = cast<IntEvalValue>(*lhs.getValue()).getValue();
@@ -139,13 +139,13 @@ int main() {
     Engine engine(evalContext, 100);
 
     Answer first = engine.query(uncached[0]);
-    CHECK(first.status == EvalStatus::Completed);
+    CHECK(first.completed());
     CHECK(first.getValue() && !first.getValue()->isCached());
     CHECK(getTracked(first) && *getTracked(first) == 5);
     CHECK(liveTracked == 1);
 
     Answer second = engine.query(uncached[1]);
-    CHECK(second.status == EvalStatus::Completed);
+    CHECK(second.completed());
     CHECK(getTracked(second) && *getTracked(second) == 10);
     CHECK(liveTracked == 2);
 
@@ -153,7 +153,7 @@ int main() {
     CHECK(first.getValue()->getImpl() != second.getValue()->getImpl());
 
     Answer constant = engine.query(constants[0]);
-    CHECK(constant.status == EvalStatus::Completed);
+    CHECK(constant.completed());
     CHECK(constant.getValue() && !constant.getValue()->isCached());
     CHECK(cast<IntEvalValue>(*constant.getValue()).getValue() == 7);
     CHECK(liveTracked == 2);
