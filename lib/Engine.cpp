@@ -72,7 +72,7 @@ Answer Engine::evaluate(Value value) {
   if (auto it = queryAnswers.find(value); it != queryAnswers.end())
     return it->second;
   Answer answer = compute(value);
-  if (answer.status == EvalStatus::Completed)
+  if (answer.completed())
     queryAnswers.try_emplace(value, answer);
   return answer;
 }
@@ -93,15 +93,15 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   // Cache-key methods and graph-region operands can re-enter an operation
   // whose evaluation is in progress.
   if (!active.insert(op).second)
-    return {EvalStatus::Cycle, std::nullopt};
+    return EvalStatus::Cycle;
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
   std::optional<detail::CacheLookup> cached;
   if (evaluable && evaluable.isCacheable()) {
     auto lookup = ctx.getCache().lookup(op, scope);
-    if (lookup.status != EvalStatus::Completed)
-      return {lookup.status, std::nullopt};
+    if (!lookup.completed())
+      return lookup.status;
     assert(lookup.getValue() && "completed lookup must provide a key");
     cached = *lookup.getValue();
     // An entry can hold an answer for a sibling result only, which is a miss.
@@ -116,7 +116,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
 
   // The step is charged before `evaluate` queries the operands it needs.
   if (remaining == 0)
-    return {EvalStatus::Exhausted, std::nullopt};
+    return EvalStatus::Exhausted;
   --remaining;
 
   SmallVector<Answer> results;
@@ -130,7 +130,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
          "evaluation must return one answer per operation result");
   detail::CacheEntry *entry = nullptr;
   if (cached && llvm::any_of(results, [](const Answer &result) {
-        return result.status == EvalStatus::Completed;
+        return result.completed();
       })) {
     entry = cached->entry;
     if (entry)
@@ -146,7 +146,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     if (entry)
       if (const auto &slot = entry->results[i])
         sibling = *slot;
-    if (sibling.status == EvalStatus::Completed)
+    if (sibling.completed())
       queryAnswers.try_emplace(op->getResult(i), sibling);
   }
 

@@ -96,7 +96,7 @@ static std::string getSourceName(OpResult result,
 }
 
 static std::string printEvaluated(const Answer &answer) {
-  if (answer.status != EvalStatus::Completed)
+  if (!answer.completed())
     return "—";
   const auto &value = answer.getValue();
   if (!value)
