@@ -68,6 +68,8 @@ private:
 
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
+  using HashFn = AbstractEvalValue::HashFn;
+  using IsEqualFn = AbstractEvalValue::IsEqualFn;
 
   template <typename T> void registerAbstractEvalValue() {
     TypeID typeID = TypeID::get<T>();
@@ -80,12 +82,13 @@ private:
           allocator.cloneStorage<StorageT>(
               static_cast<const StorageT *>(&storage)));
     };
-    insertAbstractEvalValue(typeID, T::getInterfaceMap(), clone);
+    insertAbstractEvalValue(typeID, T::getInterfaceMap(), clone, T::getHashFn(),
+                            T::getIsEqualFn());
   }
 
   void insertAbstractEvalValue(TypeID typeID,
                                ::mlir::detail::InterfaceMap &&interfaceMap,
-                               CloneFn clone);
+                               CloneFn clone, HashFn hash, IsEqualFn isEqual);
 
   MLIRContext *mlirContext;
   DenseMap<TypeID, std::unique_ptr<AbstractEvalValue>> abstractEvalValues;

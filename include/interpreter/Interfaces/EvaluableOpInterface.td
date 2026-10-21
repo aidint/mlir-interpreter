@@ -20,8 +20,8 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
                 ::llvm::hash_value($_op.getOperation())};
       }]>,
     InterfaceMethod<
-      "Compares cache keys symmetrically; equal operations must hash equally. May return Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
-      "::mlir::interpreter::EvalResult<bool>", "isEqual",
+      "Compares cache keys symmetrically; equivalent operations must hash equally. May return Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
+      "::mlir::interpreter::EvalResult<bool>", "isEquivalentTo",
       (ins "::mlir::Operation *":$other,
            "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
@@ -33,9 +33,12 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
       "::llvm::SmallVector<::mlir::interpreter::Answer>", "evaluate",
       (ins "::mlir::interpreter::EvalScope &":$scope)>,
     InterfaceMethod<
-      "Returns whether stable results may be retained across queries.",
-      "bool", "isCacheable", (ins), [{}],
-      /*defaultImplementation=*/[{ return true; }]>
+      "Returns whether this operation's results may be retained across queries, or returns Exhausted, NeedsOrder or Cycle. It may query operands through `scope`. `getHash` and `isEquivalentTo` stay callable when it is false. Defaults to true.",
+      "::mlir::interpreter::EvalResult<bool>", "isCacheable",
+      (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
+      /*defaultImplementation=*/[{
+        return {::mlir::interpreter::EvalStatus::Completed, true};
+      }]>
   ];
 }
 

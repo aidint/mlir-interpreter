@@ -53,7 +53,7 @@ struct CacheLookup {
 /// kept across queries. Each `EvalContext` owns one, shared by every `Engine`
 /// on that context, so an answer one query computes is reused by later queries
 /// and other engines, and cached values live as long as the context. Entries
-/// are bucketed by `getHash` and matched with `isEqual`, so equivalent
+/// are bucketed by `getHash` and matched with `isEquivalentTo`, so equivalent
 /// operations share one entry. Only `Engine` fills it, inside a query, because
 /// filling copies values out of the query allocator and dedups them by
 /// address, which is only valid while that query runs.

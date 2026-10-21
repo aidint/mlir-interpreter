@@ -76,7 +76,9 @@ struct XOrIOpEval
              TrackedEvalValue::get(scope.getAllocator(), lhsInt ^ rhsInt)}};
   }
 
-  bool isCacheable(Operation *) const { return false; }
+  EvalResult<bool> isCacheable(Operation *, EvalScope &) const {
+    return {EvalStatus::Completed, false};
+  }
 };
 
 const char *moduleSource = R"mlir(

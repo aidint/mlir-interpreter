@@ -21,6 +21,14 @@ target_link_libraries(eval-cache-test PRIVATE
   MLIRSupport
   LLVMSupport)
 
+add_executable(eval-value-test EvalValue.cpp)
+
+target_link_libraries(eval-value-test PRIVATE
+  InterpreterBuiltin
+  MLIRIR
+  MLIRSupport
+  LLVMSupport)
+
 # Configures a lit suite for the tests in `source_dir`. Every suite shares
 # `lit.cfg.py`; only its name and roots differ.
 function(configure_lit_suite name source_dir binary_dir)
@@ -45,4 +53,5 @@ configure_lit_suite(interpreter-examples
 add_lit_testsuite(check-interpreter "Running the interpreter tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   ${PROJECT_BINARY_DIR}/examples
-  DEPENDS FileCheck count not interpreter engine-lifetime-test eval-cache-test)
+  DEPENDS FileCheck count not interpreter engine-lifetime-test eval-cache-test
+          eval-value-test)

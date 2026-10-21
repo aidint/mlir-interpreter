@@ -14,6 +14,11 @@ config.suffixes = [".mlir", ".test"]
 
 llvm_config.use_default_substitutions()
 llvm_config.add_tool_substitutions(
-    ["interpreter", "engine-lifetime-test", "eval-cache-test"],
+    [
+        "interpreter",
+        "engine-lifetime-test",
+        "eval-cache-test",
+        "eval-value-test",
+    ],
     config.interpreter_tools_dirs,
 )

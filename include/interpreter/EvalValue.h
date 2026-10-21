@@ -13,11 +13,15 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/Support/Casting.h"
 
+#include <cassert>
 #include <type_traits>
 #include <utility>
 
 namespace mlir::interpreter {
 
+/// This class represents an evaluated value: a pointer-sized handle to storage
+/// owned by a query, cache or answer allocator. `operator==` compares handles,
+/// while `isEqual` and `hash` compare contents as the value's class defines.
 class EvalValue {
 public:
   using ImplType = detail::EvalValueStorage;
@@ -39,6 +43,22 @@ public:
 
   template <typename T> bool hasInterface() const {
     return getAbstractEvalValue().hasInterface(TypeID::get<T>());
+  }
+
+  /// Returns a hash that is equal for values `isEqual` matches.
+  llvm::hash_code hash() const { return getAbstractEvalValue().hashFn(*this); }
+
+  /// Returns whether this value equals `other`. A value equals itself, values
+  /// of different classes never match, and the rest compare with their class's
+  /// `isEqual`. Unlike `operator==`, which compares handles, this may match
+  /// distinct instances.
+  bool isEqual(EvalValue other) const {
+    if (getImpl() == other.getImpl())
+      return true;
+    assert(*this && other && "cannot compare a null value");
+    if (getTypeID() != other.getTypeID())
+      return false;
+    return getAbstractEvalValue().isEqualFn(*this, other);
   }
 
   bool isCached() const { return impl.getInt(); }
@@ -76,6 +96,28 @@ public:
     return ::mlir::detail::InterfaceMap::get<Traits<ConcreteT>...>();
   }
 
+  /// Returns the function `EvalValue::hash` dispatches to: `ConcreteT::hash`,
+  /// or the instance's identity when the class keeps the default.
+  static AbstractEvalValue::HashFn getHashFn() {
+    if constexpr (definesEquality())
+      return [](EvalValue value) { return cast<ConcreteT>(value).hash(); };
+    else
+      return [](EvalValue value) { return llvm::hash_value(value.getImpl()); };
+  }
+
+  /// Returns the function `EvalValue::isEqual` dispatches to once both values
+  /// are known to be `ConcreteT`s.
+  static AbstractEvalValue::IsEqualFn getIsEqualFn() {
+    if constexpr (definesEquality())
+      return [](EvalValue lhs, EvalValue rhs) {
+        return cast<ConcreteT>(lhs).isEqual(cast<ConcreteT>(rhs));
+      };
+    else
+      return [](EvalValue lhs, EvalValue rhs) {
+        return lhs.getImpl() == rhs.getImpl();
+      };
+  }
+
   template <typename... Args>
   static ConcreteT get(EvalValueStorageAllocator &allocator, Args &&...args) {
     EvalContext &ctx = allocator.getContext();
@@ -88,6 +130,20 @@ public:
 protected:
   StorageT *getImpl() const {
     return static_cast<StorageT *>(EvalValue::getImpl());
+  }
+
+private:
+  /// Returns whether `ConcreteT` declares its own `hash` and `isEqual` instead
+  /// of inheriting `EvalValue`'s, which would dispatch back to it.
+  static constexpr bool definesEquality() {
+    constexpr bool hash =
+        !std::is_same_v<decltype(&ConcreteT::hash), decltype(&EvalValue::hash)>;
+    constexpr bool isEqual = !std::is_same_v<decltype(&ConcreteT::isEqual),
+                                             decltype(&EvalValue::isEqual)>;
+    static_assert(hash == isEqual,
+                  "a value class must define both `hash` and `isEqual`, or "
+                  "neither");
+    return hash;
   }
 };
 

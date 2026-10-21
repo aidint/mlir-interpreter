@@ -97,8 +97,20 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
+  // Eligibility may query operands, so it runs inside the cycle guard and
+  // shares the query's budget and memo with hashing and evaluation.
+  bool cacheable = false;
+  if (evaluable) {
+    auto eligible = evaluable.isCacheable(scope);
+    if (!eligible.completed())
+      return eligible.status;
+    assert(eligible.getValue() &&
+           "completed eligibility must provide a result");
+    cacheable = *eligible.getValue();
+  }
+
   std::optional<detail::CacheLookup> cached;
-  if (evaluable && evaluable.isCacheable()) {
+  if (cacheable) {
     auto lookup = ctx.getCache().lookup(op, scope);
     if (!lookup.completed())
       return lookup.status;

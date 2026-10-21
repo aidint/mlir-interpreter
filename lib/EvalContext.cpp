@@ -12,10 +12,11 @@ EvalContext::~EvalContext() = default;
 void EvalContext::clearCache() { cache->clear(); }
 
 void EvalContext::insertAbstractEvalValue(
-    TypeID typeID, ::mlir::detail::InterfaceMap &&interfaceMap, CloneFn clone) {
+    TypeID typeID, ::mlir::detail::InterfaceMap &&interfaceMap, CloneFn clone,
+    HashFn hash, IsEqualFn isEqual) {
   abstractEvalValues.try_emplace(
       typeID, std::unique_ptr<AbstractEvalValue>(new AbstractEvalValue(
-                  typeID, std::move(interfaceMap), clone)));
+                  typeID, std::move(interfaceMap), clone, hash, isEqual)));
 }
 
 } // namespace mlir::interpreter
