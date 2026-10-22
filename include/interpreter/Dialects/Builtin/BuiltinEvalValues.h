@@ -3,7 +3,6 @@
 
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValue.h"
-#include "interpreter/Interfaces/EquatableEvalValueInterface.h"
 
 #include "llvm/ADT/APInt.h"
 
@@ -18,9 +17,10 @@ struct IntEvalValueStorage : public EvalValueStorage {
 
 } // namespace detail
 
+/// This class represents an integer or `index` value of any width. Values
+/// with the same width and bits are equal.
 class IntEvalValue
-    : public EvalValueBase<IntEvalValue, detail::IntEvalValueStorage,
-                           EquatableEvalValueInterface::Trait> {
+    : public EvalValueBase<IntEvalValue, detail::IntEvalValueStorage> {
 public:
   using Base::Base;
 

@@ -4,11 +4,14 @@
 #include "mlir/Support/InterfaceSupport.h"
 #include "mlir/Support/TypeID.h"
 
+#include "llvm/ADT/Hashing.h"
+
 #include <utility>
 
 namespace mlir::interpreter {
 
 class AbstractEvalValue;
+class EvalValue;
 class EvalValueStorageAllocator;
 class EvalContext;
 
@@ -36,6 +39,12 @@ public:
   /// holds as an `EvalValueStorage *`.
   using CloneFn = detail::EvalValueStorage *(*)(
       EvalValueStorageAllocator &, const detail::EvalValueStorage &);
+  /// Hashes a value, and compares two values of this class. Registration binds
+  /// them to the class's `hash` and `isEqual`, or to its identity when the
+  /// class defines neither; `EvalValue::hash` and `EvalValue::isEqual`
+  /// dispatch to them.
+  using HashFn = llvm::hash_code (*)(EvalValue);
+  using IsEqualFn = bool (*)(EvalValue, EvalValue);
 
   TypeID getTypeID() const { return typeID; }
 
@@ -53,8 +62,9 @@ public:
 
 private:
   AbstractEvalValue(TypeID typeID, ::mlir::detail::InterfaceMap &&interfaceMap,
-                    CloneFn clone)
-      : typeID(typeID), interfaceMap(std::move(interfaceMap)), cloneFn(clone) {}
+                    CloneFn clone, HashFn hash, IsEqualFn isEqual)
+      : typeID(typeID), interfaceMap(std::move(interfaceMap)), cloneFn(clone),
+        hashFn(hash), isEqualFn(isEqual) {}
 
   detail::EvalValueStorage *
   clone(EvalValueStorageAllocator &allocator,
@@ -65,6 +75,9 @@ private:
   TypeID typeID;
   ::mlir::detail::InterfaceMap interfaceMap;
   CloneFn cloneFn;
+  HashFn hashFn;
+  IsEqualFn isEqualFn;
+  friend class EvalValue;
   friend class EvalValueStorageAllocator;
   friend class EvalContext;
 };

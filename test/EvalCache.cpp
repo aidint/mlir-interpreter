@@ -1,7 +1,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/Engine.h"
-#include "interpreter/Interfaces/EquatableEvalValueInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -42,10 +41,27 @@ bool isUnknown(const Answer &answer) {
   return answer.completed() && !answer.getValue();
 }
 
+struct OpaqueEvalValueStorage
+    : public mlir::interpreter::detail::EvalValueStorage {};
+
+/// This class represents a test value that keeps the identity `hash` and
+/// `isEqual`, so a key holding one matches only the same instance.
+class OpaqueEvalValue
+    : public EvalValueBase<OpaqueEvalValue, OpaqueEvalValueStorage> {
+public:
+  using Base::Base;
+
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(OpaqueEvalValue)
+};
+
 struct Behavior {
+  unsigned eligibilityChecks = 0;
   unsigned hashes = 0;
   unsigned evaluations = 0;
-  bool cacheable = true;
+  std::function<EvalResult<bool>(Operation *, EvalScope &)> cacheable =
+      [](Operation *, EvalScope &) {
+        return EvalResult<bool>{EvalStatus::Completed, true};
+      };
   std::function<EvalResult<llvm::hash_code>(Operation *, EvalScope &)> hash =
       [](Operation *op, EvalScope &) {
         return EvalResult<llvm::hash_code>{EvalStatus::Completed,
@@ -78,8 +94,8 @@ struct TestModel
     return behavior.hash(op, scope);
   }
 
-  EvalResult<bool> isEqual(Operation *op, Operation *other,
-                           EvalScope &scope) const {
+  EvalResult<bool> isEquivalentTo(Operation *op, Operation *other,
+                                  EvalScope &scope) const {
     return behaviors.at(op).equal(op, other, scope);
   }
 
@@ -89,8 +105,18 @@ struct TestModel
     return behavior.evaluate(op, scope);
   }
 
-  bool isCacheable(Operation *op) const { return behaviors.at(op).cacheable; }
+  EvalResult<bool> isCacheable(Operation *op, EvalScope &scope) const {
+    auto &behavior = behaviors.at(op);
+    ++behavior.eligibilityChecks;
+    return behavior.cacheable(op, scope);
+  }
 };
+
+void uncacheable(Operation *op) {
+  behaviors.at(op).cacheable = [](Operation *, EvalScope &) {
+    return EvalResult<bool>{EvalStatus::Completed, false};
+  };
+}
 
 DialectRegistry registry() {
   DialectRegistry result;
@@ -109,6 +135,7 @@ struct Fixture {
     context.getOrLoadDialect<arith::ArithDialect>();
     UnrealizedConversionCastOp::attachInterface<TestModel>(context);
     registerBuiltinEvalValues(evalContext);
+    evalContext.registerEvalValues<OpaqueEvalValue>();
   }
 
   ~Fixture() { behaviors.clear(); }
@@ -144,8 +171,7 @@ void semanticKey(Operation *op) {
     if (!answer.completed())
       return answer.status;
     if (const auto &value = answer.getValue())
-      return {EvalStatus::Completed,
-              cast<EquatableEvalValueInterface>(*value).hash()};
+      return {EvalStatus::Completed, value->hash()};
     return {EvalStatus::Completed,
             llvm::hash_value(op->getOperand(0).getAsOpaquePointer())};
   };
@@ -164,8 +190,38 @@ void semanticKey(Operation *op) {
       return {EvalStatus::Completed,
               !lhs.getValue() && !rhs.getValue() &&
                   op->getOperand(0) == other->getOperand(0)};
+    return {EvalStatus::Completed, lhs.getValue()->isEqual(*rhs.getValue())};
+  };
+}
+
+/// Caches `op` only when its `size` attribute is at least 100, as a model
+/// may cache a large `linalg.matmul` but not a small one.
+void sizeEligibility(Operation *op, int64_t size) {
+  op->setAttr("size", Builder(op->getContext()).getI64IntegerAttr(size));
+  behaviors.at(op).cacheable = [](Operation *op, EvalScope &) {
+    auto size = op->getAttrOfType<IntegerAttr>("size");
+    return EvalResult<bool>{EvalStatus::Completed, size.getInt() >= 100};
+  };
+}
+
+/// Caches `op` only when its first operand is known and at least 100.
+void operandEligibility(Operation *op) {
+  behaviors.at(op).cacheable = [](Operation *op,
+                                  EvalScope &scope) -> EvalResult<bool> {
+    Answer size = scope.query(op->getOperand(0));
+    if (!size.completed())
+      return size.status;
+    const auto &value = size.getValue();
     return {EvalStatus::Completed,
-            mlir::interpreter::isEqual(*lhs.getValue(), *rhs.getValue())};
+            value && cast<IntEvalValue>(*value).getValue().sge(100)};
+  };
+}
+
+/// Makes `op` answer with a new `OpaqueEvalValue` on every evaluation.
+void opaque(Operation *op) {
+  behaviors.at(op).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{
+        {EvalStatus::Completed, OpaqueEvalValue::get(scope.getAllocator())}};
   };
 }
 
@@ -204,7 +260,8 @@ void testZeroHashCollision() {
   behaviors.at(second).evaluate = [](Operation *, EvalScope &scope) {
     return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
   };
-  auto comparison = cast<EvaluableOpInterface>(second).isEqual(first, scope);
+  auto comparison =
+      cast<EvaluableOpInterface>(second).isEquivalentTo(first, scope);
   CHECK(comparison.completed());
   CHECK(comparison.getValue().has_value());
   CHECK(!*comparison.getValue());
@@ -303,7 +360,7 @@ void testSignalsAndOptOut() {
     CHECK(!hashFailure.getValue());
     CHECK(behaviors.at(unhashable).evaluations == 0);
 
-    // An equality signal skips the candidate instead of failing the lookup.
+    // An equivalence signal skips the candidate instead of failing the lookup.
     auto key = llvm::hash_code(123);
     Operation *candidate = f.hashedOp(key);
     CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
@@ -320,7 +377,7 @@ void testSignalsAndOptOut() {
     CHECK(behaviors.at(op).evaluations == 1);
 
     // Opting out skips hashing, so the signaling hash is never called.
-    behaviors.at(unhashable).cacheable = false;
+    uncacheable(unhashable);
     CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
     CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
     CHECK(behaviors.at(unhashable).evaluations == 2);
@@ -424,7 +481,7 @@ void testInsertResumesSearch() {
   CHECK(comparisons[x] == 1);
 }
 
-void testEqualityConsumesBudget() {
+void testEquivalenceConsumesBudget() {
   Fixture f;
   auto key = llvm::hash_code(123);
   Operation *candidate = f.hashedOp(key);
@@ -432,8 +489,8 @@ void testEqualityConsumesBudget() {
   CHECK(isInteger(large.query(candidate->getResult(0)), 7));
   Operation *n1 = f.op();
   Operation *n2 = f.op();
-  behaviors.at(n1).cacheable = false;
-  behaviors.at(n2).cacheable = false;
+  uncacheable(n1);
+  uncacheable(n2);
   Operation *op = f.hashedOp(key);
   behaviors.at(op).equal = [n1, n2](Operation *, Operation *,
                                     EvalScope &scope) {
@@ -458,7 +515,7 @@ void testResultCountFilter() {
   CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
   Operation *op = f.hashedOp(key);
   unsigned comparisons = 0;
-  // Deliberately wrong: claims equality with every candidate.
+  // Deliberately wrong: claims equivalence with every candidate.
   behaviors.at(op).equal = [&](Operation *, Operation *, EvalScope &) {
     ++comparisons;
     return EvalResult<bool>{EvalStatus::Completed, true};
@@ -488,7 +545,7 @@ void testInsertionAfterEvaluation() {
   CHECK(behaviors.at(op).evaluations == 1);
 }
 
-void testCycleThroughEquality() {
+void testCycleThroughEquivalence() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
   auto key = llvm::hash_code(123);
@@ -549,7 +606,7 @@ void testMemoizedOperand() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
   Operation *n = f.op();
-  behaviors.at(n).cacheable = false;
+  uncacheable(n);
   Operation *a = f.op(1, n->getResult(0));
   semanticKey(a);
   // Hashing and evaluating `a` share one evaluation of `n`.
@@ -563,7 +620,7 @@ void testMemoizedOperand() {
 void testMemoizedSiblings() {
   Fixture f;
   Operation *pair = f.op(2);
-  behaviors.at(pair).cacheable = false;
+  uncacheable(pair);
   Operation *sum = f.op(1, {pair->getResult(0), pair->getResult(1)});
   // One step for `pair` and one for `sum`: `pair`'s second result is recorded
   // when its first is evaluated.
@@ -591,6 +648,192 @@ void testLazyOperands() {
   CHECK(behaviors.at(operand).evaluations == 0);
 }
 
+void testEligibilityFromAttributes() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Operation *large = f.op();
+  Operation *small = f.op();
+  sizeEligibility(large, 1000);
+  sizeEligibility(small, 10);
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(large->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(isInteger(engine.query(large->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behaviors.at(large).evaluations == 1);
+  // `small` is neither looked up nor inserted, so every query evaluates it.
+  for (unsigned i = 0; i != 2; ++i) {
+    Answer answer = engine.query(small->getResult(0), outcome);
+    CHECK(isInteger(answer, 7));
+    CHECK(!answer.getValue()->isCached());
+    CHECK(outcome == CacheOutcome::None);
+  }
+  CHECK(behaviors.at(small).hashes == 0);
+  CHECK(behaviors.at(small).evaluations == 2);
+}
+
+void testEligibilityFromOperands() {
+  Fixture f;
+  Operation *large = f.op(1, f.constant(1000));
+  Operation *small = f.op(1, f.constant(10));
+  operandEligibility(large);
+  operandEligibility(small);
+
+  // A miss on `large` costs 2 steps: eligibility evaluates its constant, which
+  // evaluation then reuses, and evaluating `large` takes the second.
+  Engine noSteps(f.evalContext, 0);
+  CHECK(noSteps.query(large->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(behaviors.at(large).hashes == 0);
+  Engine oneStep(f.evalContext, 1);
+  CHECK(oneStep.query(large->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(behaviors.at(large).evaluations == 0);
+  Engine twoSteps(f.evalContext, 2);
+  CHECK(isInteger(twoSteps.query(large->getResult(0)), 7));
+  // A hit costs only the constant.
+  CHECK(isInteger(oneStep.query(large->getResult(0)), 7));
+  CHECK(behaviors.at(large).evaluations == 1);
+
+  CHECK(isInteger(twoSteps.query(small->getResult(0)), 7));
+  CHECK(isInteger(twoSteps.query(small->getResult(0)), 7));
+  CHECK(behaviors.at(small).hashes == 0);
+  CHECK(behaviors.at(small).evaluations == 2);
+}
+
+void testEligibilitySharesMemo() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Operation *n = f.op();
+  uncacheable(n);
+  behaviors.at(n).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 1000)};
+  };
+  Operation *a = f.op(1, n->getResult(0));
+  operandEligibility(a);
+  semanticKey(a);
+  // Eligibility, hashing and evaluating `a` share one evaluation of `n`.
+  CHECK(isInteger(engine.query(a->getResult(0)), 7));
+  CHECK(behaviors.at(a).hashes == 1);
+  CHECK(behaviors.at(n).evaluations == 1);
+}
+
+void testEligibilitySignals() {
+  for (EvalStatus signal :
+       {EvalStatus::Exhausted, EvalStatus::NeedsOrder, EvalStatus::Cycle}) {
+    Fixture f;
+    Engine engine(f.evalContext, 1000);
+    Operation *op = f.op();
+    behaviors.at(op).cacheable = [signal](Operation *,
+                                          EvalScope &) -> EvalResult<bool> {
+      return signal;
+    };
+    CacheOutcome outcome;
+    Answer answer = engine.query(op->getResult(0), outcome);
+    CHECK(answer.status == signal);
+    CHECK(!answer.getValue());
+    CHECK(outcome == CacheOutcome::None);
+    CHECK(behaviors.at(op).hashes == 0);
+    CHECK(behaviors.at(op).evaluations == 0);
+  }
+}
+
+void testCycleThroughEligibility() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Operation *op = f.op();
+  behaviors.at(op).cacheable = [](Operation *op,
+                                  EvalScope &scope) -> EvalResult<bool> {
+    Answer answer = scope.query(op->getResult(0));
+    if (!answer.completed())
+      return answer.status;
+    return {EvalStatus::Completed, true};
+  };
+  Answer cycle = engine.query(op->getResult(0));
+  CHECK(cycle.status == EvalStatus::Cycle);
+  CHECK(behaviors.at(op).eligibilityChecks == 1);
+  CHECK(behaviors.at(op).hashes == 0);
+  CHECK(behaviors.at(op).evaluations == 0);
+  // `op` must have left the active set on the early return.
+  behaviors.at(op).cacheable = Behavior().cacheable;
+  CHECK(isInteger(engine.query(op->getResult(0)), 7));
+}
+
+void testUncacheableOpsCanBeKeyed() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Operation *x = f.op(1, f.constant(9));
+  Operation *y = f.op(1, f.constant(9));
+  Operation *z = f.op(1, f.constant(8));
+  for (Operation *op : {x, y, z}) {
+    uncacheable(op);
+    semanticKey(op);
+  }
+  // `outer` keys them as an op comparing the ops in its region would.
+  Operation *outer = f.op();
+  behaviors.at(outer).evaluate = [x, y, z](Operation *, EvalScope &scope) {
+    auto key = cast<EvaluableOpInterface>(x);
+    auto hash = key.getHash(scope);
+    auto otherHash = cast<EvaluableOpInterface>(y).getHash(scope);
+    auto same = key.isEquivalentTo(y, scope);
+    auto different = key.isEquivalentTo(z, scope);
+    bool keyed = hash.completed() && otherHash.completed() &&
+                 same.completed() && different.completed() &&
+                 *hash.getValue() == *otherHash.getValue() &&
+                 *same.getValue() && !*different.getValue();
+    return SmallVector<Answer>{integer(scope.getAllocator(), keyed)};
+  };
+  CHECK(isInteger(engine.query(outer->getResult(0)), 1));
+  for (Operation *op : {x, y, z}) {
+    CHECK(behaviors.at(op).eligibilityChecks == 0);
+    CHECK(behaviors.at(op).evaluations == 0);
+  }
+}
+
+void testIdentityValueKeys() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  auto key = llvm::hash_code(123);
+  Operation *producer = f.hashedOp(key);
+  Operation *equivalent = equivalentTo(f, key, producer);
+  opaque(producer);
+  opaque(equivalent);
+  Operation *a = f.op(1, producer->getResult(0));
+  Operation *b = f.op(1, equivalent->getResult(0));
+  semanticKey(a);
+  semanticKey(b);
+  // `producer`'s answer is the instance the cache retained, so `a`'s key is
+  // the same in every query.
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(a->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(isInteger(engine.query(a->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Hit);
+  // `equivalent` hits `producer`'s entry, so `b`'s key holds the same
+  // instance as `a`'s and `b` hits too.
+  CHECK(isInteger(engine.query(b->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behaviors.at(a).evaluations == 1);
+  CHECK(behaviors.at(b).evaluations == 0);
+  CHECK(behaviors.at(producer).evaluations == 1);
+  CHECK(behaviors.at(equivalent).evaluations == 0);
+
+  // Uncached producers answer with a new instance each, so keys holding equal
+  // contents still differ.
+  Operation *first = f.op();
+  Operation *second = f.op();
+  for (Operation *op : {first, second}) {
+    opaque(op);
+    uncacheable(op);
+  }
+  Operation *c = f.op(1, first->getResult(0));
+  Operation *d = f.op(1, second->getResult(0));
+  semanticKey(c);
+  semanticKey(d);
+  CHECK(isInteger(engine.query(c->getResult(0)), 7));
+  CHECK(isInteger(engine.query(d->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behaviors.at(d).evaluations == 1);
+}
+
 }
 
 int main() {
@@ -603,15 +846,22 @@ int main() {
   testNestedInsertionDuringLookup();
   testNestedInsertionDuringInsert();
   testInsertResumesSearch();
-  testEqualityConsumesBudget();
+  testEquivalenceConsumesBudget();
   testResultCountFilter();
   testInsertionAfterEvaluation();
-  testCycleThroughEquality();
+  testCycleThroughEquivalence();
   testCycleThroughHash();
   testCycleThroughOperands();
   testMemoizedOperand();
   testMemoizedSiblings();
   testLazyOperands();
+  testEligibilityFromAttributes();
+  testEligibilityFromOperands();
+  testEligibilitySharesMemo();
+  testEligibilitySignals();
+  testCycleThroughEligibility();
+  testUncacheableOpsCanBeKeyed();
+  testIdentityValueKeys();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

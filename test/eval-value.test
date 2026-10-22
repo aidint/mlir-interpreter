@@ -1,0 +1,2 @@
+# Checks value hashing and equality, by identity and by contents.
+RUN: eval-value-test

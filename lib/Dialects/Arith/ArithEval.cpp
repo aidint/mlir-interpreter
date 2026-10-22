@@ -1,6 +1,5 @@
 #include "interpreter/Dialects/Arith/ArithEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
-#include "interpreter/Interfaces/EquatableEvalValueInterface.h"
 #include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -69,15 +68,6 @@ struct BinaryKey {
   EvalValue lhs, rhs;
 };
 
-/// Queries an operand for a key, dropping a value that can't be compared.
-Answer queryKeyOperand(Operation *op, unsigned index, EvalScope &scope) {
-  Answer answer = scope.query(op->getOperand(index));
-  if (const auto &value = answer.getValue())
-    if (!isa<EquatableEvalValueInterface>(*value))
-      answer.value.reset();
-  return answer;
-}
-
 /// Returns `op`'s key, querying only the operands its evaluation queries.
 /// Operand signals propagate instead of changing the key.
 EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
@@ -85,7 +75,7 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
   BinaryKey identity{op};
   BinaryKey zero{nullptr, /*zeroProduct=*/true};
 
-  Answer lhs = queryKeyOperand(op, 0, scope);
+  Answer lhs = scope.query(op->getOperand(0));
   if (!lhs.completed())
     return lhs.status;
   if (product && isZero(lhs))
@@ -94,7 +84,7 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
   if (!lhs.getValue() && !product)
     return {EvalStatus::Completed, identity};
 
-  Answer rhs = queryKeyOperand(op, 1, scope);
+  Answer rhs = scope.query(op->getOperand(1));
   if (!rhs.completed())
     return rhs.status;
   if (product && isZero(rhs))
@@ -123,15 +113,15 @@ struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
                            getOverflowFlags(op), k.zeroProduct);
     if (k.zeroProduct)
       return {EvalStatus::Completed, head};
-    size_t lhs = cast<EquatableEvalValueInterface>(k.lhs).hash();
-    size_t rhs = cast<EquatableEvalValueInterface>(k.rhs).hash();
+    size_t lhs = k.lhs.hash();
+    size_t rhs = k.rhs.hash();
     if (op->hasTrait<OpTrait::IsCommutative>() && rhs < lhs)
       std::swap(lhs, rhs);
     return {EvalStatus::Completed, llvm::hash_combine(head, lhs, rhs)};
   }
 
-  EvalResult<bool> isEqual(Operation *op, Operation *other,
-                           EvalScope &scope) const {
+  EvalResult<bool> isEquivalentTo(Operation *op, Operation *other,
+                                  EvalScope &scope) const {
     if (op->getName() != other->getName() ||
         op->getResultTypes() != other->getResultTypes() ||
         getOverflowFlags(op) != getOverflowFlags(other))
@@ -148,11 +138,9 @@ struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
       return {EvalStatus::Completed, a.identity == b.identity};
     if (a.zeroProduct || b.zeroProduct)
       return {EvalStatus::Completed, a.zeroProduct == b.zeroProduct};
-    bool equal = interpreter::isEqual(a.lhs, b.lhs) &&
-                 interpreter::isEqual(a.rhs, b.rhs);
+    bool equal = a.lhs.isEqual(b.lhs) && a.rhs.isEqual(b.rhs);
     if (!equal && op->hasTrait<OpTrait::IsCommutative>())
-      equal = interpreter::isEqual(a.lhs, b.rhs) &&
-              interpreter::isEqual(a.rhs, b.lhs);
+      equal = a.lhs.isEqual(b.rhs) && a.rhs.isEqual(b.lhs);
     return {EvalStatus::Completed, equal};
   }
 };

@@ -10,9 +10,9 @@ CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
                                       llvm::hash_code key, size_t &next,
                                       EvalScope &scope) {
   for (;; ++next) {
-    // `isEqual` can run nested queries that insert into the map, so look the
-    // bucket up again on every step. Entries are only appended and their
-    // addresses are stable, so `next` stays valid.
+    // `isEquivalentTo` can run nested queries that insert into the map, so
+    // look the bucket up again on every step. Entries are only appended and
+    // their addresses are stable, so `next` stays valid.
     auto it = entries.find(key);
     if (it == entries.end() || next == it->second.size())
       return nullptr;
@@ -23,11 +23,12 @@ CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
       continue;
     // A signal only means this candidate can't be compared now; another
     // candidate, or evaluation, may still answer.
-    auto equal = op.isEqual(entry->op, scope);
-    if (!equal.completed())
+    auto equivalent = op.isEquivalentTo(entry->op, scope);
+    if (!equivalent.completed())
       continue;
-    assert(equal.getValue() && "completed equality must provide a result");
-    if (*equal.getValue())
+    assert(equivalent.getValue() &&
+           "completed equivalence must provide a result");
+    if (*equivalent.getValue())
       return entry;
   }
 }
@@ -52,7 +53,7 @@ CacheEntry *EvalCache::insert(Operation *op, const CacheLookup &lookup,
   // to it, so search again instead of adding a duplicate entry. `lookup`
   // already compared the first `searched` candidates, and keys are stable, so
   // only candidates appended since then can match. Comparing the others again
-  // would spend budget on `isEqual` calls whose answer is already known.
+  // would spend budget on `isEquivalentTo` calls whose answer is already known.
   size_t next = lookup.searched;
   CacheEntry *entry =
       findEquivalent(cast<EvaluableOpInterface>(op), lookup.key, next, scope);
