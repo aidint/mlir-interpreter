@@ -12,8 +12,8 @@ def EvaluableAttrInterface : AttrInterface<"EvaluableAttrInterface"> {
   let methods = [
     InterfaceMethod<
       "Returns the interpreter value this attribute denotes, if any.",
-      "::std::optional<::mlir::interpreter::EvalValue>",
-      "toEvalValue", (ins "::mlir::interpreter::EvalValueStorageAllocator &":$allocator)>
+      "::std::optional<::mlir::interpreter::EvalValue>", "toEvalValue",
+      (ins "::mlir::interpreter::EvalValueStorageAllocator &":$allocator)>
   ];
 }
 
