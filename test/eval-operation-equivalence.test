@@ -1,0 +1,3 @@
+# Checks the signal-aware operation hashing and equivalence utilities and the
+# default cache keys built on them.
+RUN: eval-operation-equivalence-test

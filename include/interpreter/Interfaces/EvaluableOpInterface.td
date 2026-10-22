@@ -12,21 +12,21 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
 
   let methods = [
     InterfaceMethod<
-      "Computes a stable cache hash, or returns Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
+      "Computes a stable cache hash, or returns Exhausted, NeedsOrder or Cycle. Defaults to `EvalOperationEquivalence::computeHash` over the evaluated operands; an unknown operand hashes by its SSA value.",
       "::mlir::interpreter::EvalResult<::llvm::hash_code>", "getHash",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
-        return {::mlir::interpreter::EvalStatus::Completed,
-                ::llvm::hash_value($_op.getOperation())};
+        return ::mlir::interpreter::detail::getDefaultHash($_op.getOperation(),
+                                                         scope);
       }]>,
     InterfaceMethod<
-      "Compares cache keys symmetrically; equivalent operations must hash equally. May return Exhausted, NeedsOrder or Cycle. Defaults to the operation's identity.",
+      "Compares cache keys symmetrically; equivalent operations must hash equally. May return Exhausted, NeedsOrder or Cycle. Defaults to `EvalOperationEquivalence::isEquivalentTo`, which compares structure and regions, then values from outside the operations by their evaluated values; an unknown value only equals the same SSA value.",
       "::mlir::interpreter::EvalResult<bool>", "isEquivalentTo",
       (ins "::mlir::Operation *":$other,
            "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
-        return {::mlir::interpreter::EvalStatus::Completed,
-                $_op.getOperation() == other};
+        return ::mlir::interpreter::detail::isDefaultEquivalent(
+            $_op.getOperation(), other, scope);
       }]>,
     InterfaceMethod<
       "Returns one answer per result. Operands are queried through `scope`, and a signal from one must be propagated, e.g. with `Answer::propagate`.",
