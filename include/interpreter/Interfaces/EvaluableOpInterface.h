@@ -30,6 +30,24 @@ private:
   Engine &engine;
 };
 
+/// Hashes `value` by its evaluated value, or by its SSA identity when it is
+/// unknown, consistently with `isEvaluatedValueEqual`. A signal from
+/// evaluating it is returned.
+EvalResult<llvm::hash_code> hashEvaluatedValue(Value value, EvalScope &scope);
+
+/// Returns whether `lhs` and `rhs` evaluate to equal values. An unknown value
+/// only equals itself, so `rhs` is not queried when `lhs` is unknown. A signal
+/// from evaluating either is returned.
+EvalResult<bool> isEvaluatedValueEqual(Value lhs, Value rhs, EvalScope &scope);
+
+namespace detail {
+/// The default `getHash` and `isEquivalentTo`: `EvalOperationEquivalence`
+/// with `hashEvaluatedValue` and `isEvaluatedValueEqual`.
+EvalResult<llvm::hash_code> getDefaultHash(Operation *op, EvalScope &scope);
+EvalResult<bool> isDefaultEquivalent(Operation *op, Operation *other,
+                                     EvalScope &scope);
+} // namespace detail
+
 } // namespace mlir::interpreter
 
 #include "interpreter/Interfaces/EvaluableOpInterface.h.inc"
