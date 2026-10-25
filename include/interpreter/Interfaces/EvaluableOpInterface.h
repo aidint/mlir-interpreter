@@ -8,6 +8,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/Hashing.h"

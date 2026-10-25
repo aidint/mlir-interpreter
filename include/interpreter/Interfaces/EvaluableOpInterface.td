@@ -40,12 +40,14 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
       (ins "::mlir::interpreter::EvalScope &":$scope)>,
     InterfaceMethod<[{
         Returns whether this operation's results may be retained across queries,
-        or returns Exhausted, NeedsOrder or Cycle.
+        or returns Exhausted, NeedsOrder or Cycle. By default only operations
+        without side effects are cached, since an operation with them can
+        compute different results from equal operands.
       }],
       "::mlir::interpreter::EvalResult<bool>", "isCacheable",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
-        return true;
+        return ::mlir::isMemoryEffectFree($_op.getOperation());
       }]>
   ];
 }

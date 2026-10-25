@@ -3,6 +3,8 @@
 #include "interpreter/Engine.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -99,6 +101,18 @@ struct TestModel
   }
 };
 
+/// This class represents a test model that keeps every default, so whether its
+/// op is cached follows the op's side effects.
+template <typename OpT>
+struct DefaultModel
+    : EvaluableOpInterface::ExternalModel<DefaultModel<OpT>, OpT> {
+  SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
+    auto &behavior = behaviors[op];
+    ++behavior.evaluations;
+    return behavior.evaluate(op, scope);
+  }
+};
+
 void uncacheable(Operation *op) {
   behaviors.at(op).cacheable = [](Operation *, EvalScope &) { return false; };
 }
@@ -117,8 +131,13 @@ struct Fixture {
   OpBuilder builder{module->getBody(), module->getBody()->begin()};
 
   Fixture() {
-    context.getOrLoadDialect<arith::ArithDialect>();
+    context.loadDialect<arith::ArithDialect, memref::MemRefDialect,
+                        scf::SCFDialect>();
     UnrealizedConversionCastOp::attachInterface<TestModel>(context);
+    arith::AddIOp::attachInterface<DefaultModel<arith::AddIOp>>(context);
+    memref::LoadOp::attachInterface<DefaultModel<memref::LoadOp>>(context);
+    scf::ExecuteRegionOp::attachInterface<DefaultModel<scf::ExecuteRegionOp>>(
+        context);
     registerBuiltinEvalValues(evalContext);
     evalContext.registerEvalValues<OpaqueEvalValue>();
   }
@@ -809,6 +828,59 @@ void testIdentityValueKeys() {
   CHECK(behaviors.at(d).evaluations == 1);
 }
 
+/// Creates an `scf.execute_region` that yields the value `body` creates in it.
+Value executeRegion(OpBuilder &builder, function_ref<Value()> body) {
+  Location loc = builder.getUnknownLoc();
+  auto op = scf::ExecuteRegionOp::create(builder, loc, builder.getI32Type());
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToStart(&op.getRegion().emplaceBlock());
+  scf::YieldOp::create(builder, loc, body());
+  return op.getResult(0);
+}
+
+void testSideEffectsOptOut() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Location loc = f.builder.getUnknownLoc();
+  Value constant = f.constant(9);
+  Value memory = memref::AllocaOp::create(
+      f.builder, loc, MemRefType::get({}, f.builder.getI32Type()));
+  using Make = std::function<Value()>;
+  Make add = [&]() -> Value {
+    return arith::AddIOp::create(f.builder, loc, constant, constant);
+  };
+  Make load = [&]() -> Value {
+    return memref::LoadOp::create(f.builder, loc, memory, ValueRange());
+  };
+  auto inRegion = [&](Make body) -> Make {
+    return [&, body] { return executeRegion(f.builder, body); };
+  };
+
+  // Pure ops share an entry, and so do region ops whose bodies are pure.
+  CacheOutcome outcome;
+  for (const Make &make : {add, inRegion(add)}) {
+    Value first = make();
+    Value second = make();
+    CHECK(isInteger(engine.query(first, outcome), 7));
+    CHECK(outcome == CacheOutcome::Miss);
+    CHECK(isInteger(engine.query(second, outcome), 7));
+    CHECK(outcome == CacheOutcome::Hit);
+  }
+
+  // A load can read different memory than an equal load, so loads, and region
+  // ops that load, are evaluated on every query.
+  for (const Make &make : {load, inRegion(load)}) {
+    Value first = make();
+    Value second = make();
+    for (Value value : {first, second, first}) {
+      CHECK(isInteger(engine.query(value, outcome), 7));
+      CHECK(outcome == CacheOutcome::None);
+    }
+    CHECK(behaviors.at(first.getDefiningOp()).evaluations == 2);
+    CHECK(behaviors.at(second.getDefiningOp()).evaluations == 1);
+  }
+}
+
 }
 
 int main() {
@@ -837,6 +909,7 @@ int main() {
   testCycleThroughEligibility();
   testUncacheableOpsCanBeKeyed();
   testIdentityValueKeys();
+  testSideEffectsOptOut();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
