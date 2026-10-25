@@ -21,6 +21,7 @@ target_link_libraries(eval-cache-test PRIVATE
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRSupport
+  MLIRUBDialect
   LLVMSupport)
 
 add_executable(eval-operation-equivalence-test EvalOperationEquivalence.cpp)

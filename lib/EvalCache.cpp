@@ -1,4 +1,5 @@
 #include "interpreter/EvalCache.h"
+#include "interpreter/Interfaces/EvaluableAttrInterface.h"
 #include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include <cassert>
@@ -63,6 +64,23 @@ CacheEntry *EvalCache::insert(Operation *op, const CacheLookup &lookup,
   }
   fill(entry, answers);
   return entry;
+}
+
+std::optional<EvalValue> EvalCache::getConstant(EvaluableAttrInterface attr,
+                                                Type type, bool &hit) {
+  assert(attr.isCacheable() && "only cacheable attributes are cached");
+  std::pair<Attribute, Type> key(attr, type);
+  if (auto it = constants.find(key); it != constants.end()) {
+    hit = true;
+    return it->second;
+  }
+  hit = false;
+  // Converting straight into the cache needs no copy. Unknowns are cheap, so
+  // they aren't stored.
+  std::optional<EvalValue> value = attr.toEvalValue(allocator);
+  if (value)
+    constants.try_emplace(key, *value);
+  return value;
 }
 
 void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {

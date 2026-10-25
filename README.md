@@ -49,8 +49,9 @@ all queries share one cache. It prints one row per result:
 - `evaluated`: the value, `unknown`, or `—` when the query didn't complete.
 - `cache`: the outcome of the lookup for that result's own operation, not for
   nested queries. It shows `hit` or `miss` when the lookup completes, and `—`
-  when the operation isn't cached (constants, operations without an evaluation
-  function) or hashing ran out first. A query can miss and then exhaust.
+  when the operation isn't cached (constants whose attribute doesn't opt in,
+  such as integers, and operations without an evaluation function) or hashing
+  ran out first. A query can miss and then exhaust.
 - `status`: `completed`, `exhausted`, `needs order` or `cycle`.
 
 Values are queried on demand, so a row doesn't depend on which branch would
@@ -60,9 +61,10 @@ an error only when there is no `@main` or it has no body.
 
 `--budget=N` (default 1000) is the step budget of each reported value: it is
 reset for every row, while the cache is kept for the whole run. Hashing,
-equality and evaluation share that budget. A hit can still spend budget
-computing its key, since keys hold evaluated operands, and constants are not
-cached across queries, so each query pays a step per constant it reaches.
+equality and evaluation share that budget. Each evaluated operation costs a
+step, while constants cost none. A hit can still spend budget computing its
+key, since keys hold evaluated operands, but only for operands that are neither
+constants nor cached.
 
 Other options: `--allow-unregistered-dialect`, and `--split-input-file` and
 `--verify-diagnostics`, which work as in `mlir-opt`.
@@ -138,11 +140,11 @@ value   evaluated   cache    status
 %f      5           hit      completed
 ```
 
-A known zero keys a product without its other operand, so `%p` fits in 2 steps
-and every product with a zero shares one entry:
+A known zero keys a product without its other operand, so every product with a
+zero shares one entry:
 
 ```sh
-$ build/debug/tools/interpreter/interpreter --budget=2 examples/05-zero-product.mlir
+$ build/debug/tools/interpreter/interpreter examples/05-zero-product.mlir
 value   evaluated   cache    status
 %c0     0           —        completed
 %zero   0           —        completed
@@ -151,14 +153,14 @@ value   evaluated   cache    status
 %p      0           miss     completed
 %q      0           hit      completed
 %r      0           hit      completed
-%s      —           miss     exhausted
+%s      63          miss     completed
 ```
 
-Unknown operands fall back to the operation's identity, and a small budget
-runs out either after the lookup (`miss`) or during hashing (`—`):
+Unknown operands fall back to the operation's identity. Constants and hits are
+free, so 1 step per value is enough when values are queried in order:
 
 ```sh
-$ build/debug/tools/interpreter/interpreter --budget=3 examples/06-unknown-and-budget.mlir
+$ build/debug/tools/interpreter/interpreter --budget=1 examples/06-unknown-and-budget.mlir
 value   evaluated   cache    status
 %c1     1           —        completed
 %c2     2           —        completed
@@ -169,10 +171,13 @@ value   evaluated   cache    status
 %b      unknown     miss     completed
 %s      3           miss     completed
 %h      3           hit      completed
-%e      —           miss     exhausted
 %t      7           miss     completed
-%f      —           —        exhausted
+%f      10          miss     completed
 ```
+
+With `--budget=0` only constants and `unknown` values complete. A query runs out
+either after the lookup (`miss`, as for `%s`) or during hashing (`—`, as for
+`%f`, whose operand `%s` was never cached).
 
 The tool registers the `func`, `arith`, `cf`, `scf`, `index` and `ub` dialects.
 To support more, add them in `tools/interpreter/interpreter.cpp` and link the

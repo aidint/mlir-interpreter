@@ -1,7 +1,7 @@
 // RUN: interpreter %s | FileCheck %s --match-full-lines
 
 // Every operation is queried for the first time, so each lookup misses.
-// Constants bypass the cache.
+// Integer constants bypass the cache, since they're cheaper to convert again.
 
 // CHECK: value   evaluated   cache    status
 func.func @main() {
