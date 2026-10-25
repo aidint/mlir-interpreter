@@ -1,6 +1,7 @@
 #ifndef INTERPRETER_EVALCACHE_H
 #define INTERPRETER_EVALCACHE_H
 
+#include "interpreter/Answer.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalResult.h"
 #include "interpreter/EvalValueStorageAllocator.h"

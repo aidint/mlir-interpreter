@@ -68,17 +68,14 @@ struct XOrIOpEval
     Answer rhs = scope.query(op->getOperand(1));
     if (!rhs.completed())
       return rhs.propagate(op);
-    if (!lhs.getValue() || !rhs.getValue())
-      return {{EvalStatus::Completed, std::nullopt}};
+    if (lhs.isUnknown() || rhs.isUnknown())
+      return {Answer::unknown()};
     const APInt &lhsInt = cast<IntEvalValue>(*lhs.getValue()).getValue();
     const APInt &rhsInt = cast<IntEvalValue>(*rhs.getValue()).getValue();
-    return {{EvalStatus::Completed,
-             TrackedEvalValue::get(scope.getAllocator(), lhsInt ^ rhsInt)}};
+    return {TrackedEvalValue::get(scope.getAllocator(), lhsInt ^ rhsInt)};
   }
 
-  EvalResult<bool> isCacheable(Operation *, EvalScope &) const {
-    return {EvalStatus::Completed, false};
-  }
+  EvalResult<bool> isCacheable(Operation *, EvalScope &) const { return false; }
 };
 
 const char *moduleSource = R"mlir(

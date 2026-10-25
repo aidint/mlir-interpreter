@@ -1,6 +1,7 @@
 #ifndef INTERPRETER_EVALUABLEOPINTERFACE_H
 #define INTERPRETER_EVALUABLEOPINTERFACE_H
 
+#include "interpreter/Answer.h"
 #include "interpreter/EvalResult.h"
 #include "interpreter/EvalValueStorageAllocator.h"
 

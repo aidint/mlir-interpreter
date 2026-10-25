@@ -27,15 +27,15 @@ namespace {
 Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
   Attribute attr;
   if (!matchPattern(op, m_Constant(&attr)))
-    return {EvalStatus::Completed, std::nullopt};
+    return Answer::unknown();
   auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
   if (!evaluable) {
     LDBG() << "no interpreter value for attribute " << attr;
-    return {EvalStatus::Completed, std::nullopt};
+    return Answer::unknown();
   }
   if (auto value = evaluable.toEvalValue(allocator))
-    return {EvalStatus::Completed, std::move(value)};
-  return {EvalStatus::Completed, std::nullopt};
+    return value;
+  return Answer::unknown();
 }
 
 } // namespace
@@ -56,8 +56,9 @@ Answer Engine::query(Value value, CacheOutcome &outcome) {
   // reports the lookup of its operation.
   outcome = CacheOutcome::None;
   Answer answer = compute(value, &outcome);
-  if (const auto &value = answer.getValue())
-    answer.value = answerAllocator.retain(*value);
+  if (answer.completed())
+    if (const auto &value = answer.getValue())
+      answer.value = answerAllocator.retain(*value);
   queryAllocator.reset();
   queryAnswers.clear();
   return answer;
@@ -78,16 +79,15 @@ Answer Engine::evaluate(Value value) {
 }
 
 Answer Engine::compute(Value value, CacheOutcome *outcome) {
-  Answer unknown{EvalStatus::Completed, std::nullopt};
   auto result = dyn_cast<OpResult>(value);
   if (!result)
-    return unknown;
+    return Answer::unknown();
 
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
   if (!evaluable && !op->hasTrait<OpTrait::ConstantLike>()) {
     LDBG() << "no evaluation function for '" << op->getName() << "'";
-    return unknown;
+    return Answer::unknown();
   }
 
   // Cache-key methods and graph-region operands can re-enter an operation
@@ -104,9 +104,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     auto eligible = evaluable.isCacheable(scope);
     if (!eligible.completed())
       return eligible.status;
-    assert(eligible.getValue() &&
-           "completed eligibility must provide a result");
-    cacheable = *eligible.getValue();
+    cacheable = eligible.getValue();
   }
 
   std::optional<detail::CacheLookup> cached;
@@ -114,8 +112,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     auto lookup = ctx.getCache().lookup(op, scope);
     if (!lookup.completed())
       return lookup.status;
-    assert(lookup.getValue() && "completed lookup must provide a key");
-    cached = *lookup.getValue();
+    cached = lookup.getValue();
     // An entry can hold an answer for a sibling result only, which is a miss.
     std::optional<Answer> hit;
     if (cached->entry)

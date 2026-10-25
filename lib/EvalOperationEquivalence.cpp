@@ -30,7 +30,7 @@ public:
       : checkEquivalent(checkEquivalent) {}
 
   EvalResult<bool> check(Operation *lhs, Operation *rhs) {
-    EvalResult<bool> different{EvalStatus::Completed, false};
+    EvalResult<bool> different = false;
     if (!matchOperation(lhs, rhs))
       return different;
     // A use can precede its definition, e.g. in a block listed before the
@@ -49,10 +49,10 @@ public:
     for (auto [l, r] : ops) {
       auto equivalent =
           isCommutative(l) ? compareCommutative(l, r) : compareOperands(l, r);
-      if (!equivalent.completed() || !*equivalent.getValue())
+      if (!equivalent.completed() || !equivalent.getValue())
         return equivalent;
     }
-    return {EvalStatus::Completed, true};
+    return true;
   }
 
 private:
@@ -126,7 +126,7 @@ private:
 
   EvalResult<bool> compareValues(Value lhs, Value rhs) {
     if (std::optional<bool> matched = matchValues(lhs, rhs))
-      return {EvalStatus::Completed, *matched};
+      return *matched;
     return checkEquivalent(lhs, rhs);
   }
 
@@ -134,10 +134,10 @@ private:
     for (auto [l, r] :
          llvm::zip_equal(lhs->getOperands(), rhs->getOperands())) {
       auto equivalent = compareValues(l, r);
-      if (!equivalent.completed() || !*equivalent.getValue())
+      if (!equivalent.completed() || !equivalent.getValue())
         return equivalent;
     }
-    return {EvalStatus::Completed, true};
+    return true;
   }
 
   /// Matches operands as multisets: each `lhs` operand takes the first unused
@@ -154,15 +154,15 @@ private:
         auto equivalent = compareValues(l, r);
         if (!equivalent.completed())
           return equivalent;
-        if (*equivalent.getValue()) {
+        if (equivalent.getValue()) {
           isUsed = found = true;
           break;
         }
       }
       if (!found)
-        return {EvalStatus::Completed, false};
+        return false;
     }
-    return {EvalStatus::Completed, true};
+    return true;
   }
 
   EvalOperationEquivalence::CheckEquivalentFn checkEquivalent;
@@ -191,22 +191,21 @@ EvalOperationEquivalence::computeHash(Operation *op,
     auto operandHash = hashOperand(operand);
     if (!operandHash.completed())
       return operandHash.status;
-    assert(operandHash.getValue() && "completed hashing must provide a hash");
     if (commutative)
-      operandSum += *operandHash.getValue();
+      operandSum += operandHash.getValue();
     else
-      hash = llvm::hash_combine(hash, *operandHash.getValue());
+      hash = llvm::hash_combine(hash, operandHash.getValue());
   }
   if (commutative)
     hash = llvm::hash_combine(hash, operandSum);
-  return {EvalStatus::Completed, hash};
+  return hash;
 }
 
 EvalResult<bool>
 EvalOperationEquivalence::isEquivalentTo(Operation *lhs, Operation *rhs,
                                          CheckEquivalentFn checkEquivalent) {
   if (lhs == rhs)
-    return {EvalStatus::Completed, true};
+    return true;
   return EquivalenceChecker(checkEquivalent).check(lhs, rhs);
 }
 
