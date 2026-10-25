@@ -8,24 +8,24 @@ EvalResult<llvm::hash_code> hashEvaluatedValue(Value value, EvalScope &scope) {
   if (!answer.completed())
     return answer.status;
   if (const auto &known = answer.getValue())
-    return {EvalStatus::Completed, known->hash()};
-  return {EvalStatus::Completed, mlir::hash_value(value)};
+    return known->hash();
+  return mlir::hash_value(value);
 }
 
 EvalResult<bool> isEvaluatedValueEqual(Value lhs, Value rhs, EvalScope &scope) {
   if (lhs == rhs)
-    return {EvalStatus::Completed, true};
+    return true;
   Answer lhsAnswer = scope.query(lhs);
   if (!lhsAnswer.completed())
     return lhsAnswer.status;
   const auto &lhsValue = lhsAnswer.getValue();
   if (!lhsValue)
-    return {EvalStatus::Completed, false};
+    return false;
   Answer rhsAnswer = scope.query(rhs);
   if (!rhsAnswer.completed())
     return rhsAnswer.status;
   const auto &rhsValue = rhsAnswer.getValue();
-  return {EvalStatus::Completed, rhsValue && lhsValue->isEqual(*rhsValue)};
+  return rhsValue && lhsValue->isEqual(*rhsValue);
 }
 
 EvalResult<llvm::hash_code> detail::getDefaultHash(Operation *op,

@@ -34,8 +34,6 @@ unsigned failures = 0;
     }                                                                          \
   } while (false)
 
-Answer unknown() { return {EvalStatus::Completed, std::nullopt}; }
-
 struct OpaqueEvalValueStorage
     : public mlir::interpreter::detail::EvalValueStorage {};
 
@@ -62,7 +60,7 @@ std::map<Operation *, Behavior> behaviors;
 /// Answers with operand 0's answer, or unknown when there are no operands.
 SmallVector<Answer> forward(Operation *op, EvalScope &scope) {
   if (op->getNumOperands() == 0)
-    return SmallVector<Answer>(op->getNumResults(), unknown());
+    return SmallVector<Answer>(op->getNumResults(), Answer::unknown());
   Answer answer = scope.query(op->getOperand(0));
   if (!answer.completed())
     return answer.propagate(op);
@@ -85,7 +83,7 @@ struct DefaultModel
   EvalResult<bool> isCacheable(Operation *op, EvalScope &) const {
     Behavior &behavior = behaviors[op];
     ++behavior.eligibilityChecks;
-    return {EvalStatus::Completed, behavior.cacheable};
+    return behavior.cacheable;
   }
 };
 
@@ -105,10 +103,8 @@ std::optional<bool> isOdd(const Answer &answer) {
 struct ParityModel
     : EvaluableOpInterface::ExternalModel<ParityModel, arith::XOrIOp> {
   EvalResult<llvm::hash_code> getHash(Operation *op, EvalScope &) const {
-    return EvalOperationEquivalence::computeHash(op, [](Value) {
-      return EvalResult<llvm::hash_code>{EvalStatus::Completed,
-                                         llvm::hash_code(0)};
-    });
+    return EvalOperationEquivalence::computeHash(
+        op, [](Value) { return llvm::hash_code(0); });
   }
 
   EvalResult<bool> isEquivalentTo(Operation *op, Operation *other,
@@ -122,7 +118,7 @@ struct ParityModel
           if (!rhsAnswer.completed())
             return rhsAnswer.status;
           std::optional<bool> lhsOdd = isOdd(lhsAnswer);
-          return {EvalStatus::Completed, lhsOdd && lhsOdd == isOdd(rhsAnswer)};
+          return lhsOdd && lhsOdd == isOdd(rhsAnswer);
         });
   }
 
@@ -197,7 +193,7 @@ struct Fixture {
   void inQuery(function_ref<void(EvalScope &)> fn) {
     behaviors[probe].evaluate = [fn](Operation *, EvalScope &scope) {
       fn(scope);
-      return SmallVector<Answer>{unknown()};
+      return SmallVector<Answer>{Answer::unknown()};
     };
     Engine engine(evalContext, 1000);
     engine.query(probe->getResult(0));
@@ -223,14 +219,14 @@ bool equivalent(Fixture &f, StringRef lhsName, StringRef rhsName) {
     CHECK(forward.completed() && backward.completed());
     if (!forward.completed() || !backward.completed())
       return;
-    CHECK(*forward.getValue() == *backward.getValue());
-    result = *forward.getValue();
+    CHECK(forward.getValue() == backward.getValue());
+    result = forward.getValue();
     if (!result)
       return;
     auto lhsHash = lhs.getHash(scope);
     auto rhsHash = rhs.getHash(scope);
     CHECK(lhsHash.completed() && rhsHash.completed() &&
-          *lhsHash.getValue() == *rhsHash.getValue());
+          lhsHash.getValue() == rhsHash.getValue());
   });
   return result;
 }
@@ -329,7 +325,7 @@ void testUnknownFallback() {
   // An unknown left operand decides the comparison without the right one.
   f.behavior("counted").cacheable = false;
   auto result = compare(f, "d", "e");
-  CHECK(result.completed() && !*result.getValue());
+  CHECK(result.completed() && !result.getValue());
   CHECK(f.behavior("counted").evaluations == 0);
 }
 
@@ -349,8 +345,7 @@ void testIdentityValues() {
   )mlir");
   for (StringRef name : {"o1", "o2"})
     f.behavior(name).evaluate = [](Operation *, EvalScope &scope) {
-      return SmallVector<Answer>{
-          {EvalStatus::Completed, OpaqueEvalValue::get(scope.getAllocator())}};
+      return SmallVector<Answer>{OpaqueEvalValue::get(scope.getAllocator())};
     };
   for (StringRef name : {"f1", "f2"})
     f.behavior(name).cacheable = false;
@@ -570,7 +565,7 @@ void testCustomModel() {
   auto aHash = hash(f, "a");
   auto cHash = hash(f, "c");
   CHECK(aHash.completed() && cHash.completed() &&
-        *aHash.getValue() == *cHash.getValue());
+        aHash.getValue() == cHash.getValue());
   CHECK(f.query("a") == CacheOutcome::Miss);
   CHECK(f.query("b") == CacheOutcome::Hit);
   // `c` collides with `a`'s key but isn't equivalent, so it gets its own entry.

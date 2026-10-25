@@ -14,11 +14,8 @@ namespace mlir::interpreter {
 namespace {
 
 Answer known(EvalScope &scope, APInt value) {
-  return {EvalStatus::Completed,
-          IntEvalValue::get(scope.getAllocator(), std::move(value))};
+  return IntEvalValue::get(scope.getAllocator(), std::move(value));
 }
-
-Answer unknown() { return {EvalStatus::Completed, std::nullopt}; }
 
 const APInt *getInt(const Answer &answer) {
   const auto &value = answer.getValue();
@@ -40,13 +37,13 @@ evaluateKnown(Operation *op, EvalScope &scope,
     return lhs.propagate(op);
   const APInt *lhsInt = getInt(lhs);
   if (!lhsInt)
-    return {unknown()};
+    return {Answer::unknown()};
   Answer rhs = scope.query(op->getOperand(1));
   if (!rhs.completed())
     return rhs.propagate(op);
   const APInt *rhsInt = getInt(rhs);
   if (!rhsInt)
-    return {unknown()};
+    return {Answer::unknown()};
   return {known(scope, fn(*lhsInt, *rhsInt))};
 }
 
@@ -79,20 +76,19 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
   if (!lhs.completed())
     return lhs.status;
   if (product && isZero(lhs))
-    return {EvalStatus::Completed, zero};
+    return zero;
   // A product still queries its right operand, which may be zero.
-  if (!lhs.getValue() && !product)
-    return {EvalStatus::Completed, identity};
+  if (lhs.isUnknown() && !product)
+    return identity;
 
   Answer rhs = scope.query(op->getOperand(1));
   if (!rhs.completed())
     return rhs.status;
   if (product && isZero(rhs))
-    return {EvalStatus::Completed, zero};
-  if (!lhs.getValue() || !rhs.getValue())
-    return {EvalStatus::Completed, identity};
-  return {EvalStatus::Completed,
-          BinaryKey{nullptr, false, *lhs.getValue(), *rhs.getValue()}};
+    return zero;
+  if (lhs.isUnknown() || rhs.isUnknown())
+    return identity;
+  return BinaryKey{nullptr, false, *lhs.getValue(), *rhs.getValue()};
 }
 
 /// This class implements the semantic cache key of `arith.addi`,
@@ -105,19 +101,19 @@ struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
     auto key = getKey(op, scope);
     if (!key.completed())
       return key.status;
-    const BinaryKey &k = *key.getValue();
+    const BinaryKey &k = key.getValue();
     if (k.identity)
-      return {EvalStatus::Completed, llvm::hash_value(k.identity)};
+      return llvm::hash_value(k.identity);
     llvm::hash_code head =
         llvm::hash_combine(op->getName(), op->getResult(0).getType(),
                            getOverflowFlags(op), k.zeroProduct);
     if (k.zeroProduct)
-      return {EvalStatus::Completed, head};
+      return head;
     size_t lhs = k.lhs.hash();
     size_t rhs = k.rhs.hash();
     if (op->hasTrait<OpTrait::IsCommutative>() && rhs < lhs)
       std::swap(lhs, rhs);
-    return {EvalStatus::Completed, llvm::hash_combine(head, lhs, rhs)};
+    return llvm::hash_combine(head, lhs, rhs);
   }
 
   EvalResult<bool> isEquivalentTo(Operation *op, Operation *other,
@@ -125,23 +121,23 @@ struct BinaryOpEval : EvaluableOpInterface::ExternalModel<ConcreteModel, OpT> {
     if (op->getName() != other->getName() ||
         op->getResultTypes() != other->getResultTypes() ||
         getOverflowFlags(op) != getOverflowFlags(other))
-      return {EvalStatus::Completed, false};
+      return false;
     auto key = getKey(op, scope);
     if (!key.completed())
       return key.status;
     auto otherKey = getKey(other, scope);
     if (!otherKey.completed())
       return otherKey.status;
-    const BinaryKey &a = *key.getValue();
-    const BinaryKey &b = *otherKey.getValue();
+    const BinaryKey &a = key.getValue();
+    const BinaryKey &b = otherKey.getValue();
     if (a.identity || b.identity)
-      return {EvalStatus::Completed, a.identity == b.identity};
+      return a.identity == b.identity;
     if (a.zeroProduct || b.zeroProduct)
-      return {EvalStatus::Completed, a.zeroProduct == b.zeroProduct};
+      return a.zeroProduct == b.zeroProduct;
     bool equal = a.lhs.isEqual(b.lhs) && a.rhs.isEqual(b.rhs);
     if (!equal && op->hasTrait<OpTrait::IsCommutative>())
       equal = a.lhs.isEqual(b.rhs) && a.rhs.isEqual(b.lhs);
-    return {EvalStatus::Completed, equal};
+    return equal;
   }
 };
 
@@ -177,7 +173,7 @@ struct MulIOpEval : BinaryOpEval<MulIOpEval, arith::MulIOp> {
     if (rhsInt && rhsInt->isZero())
       return {rhs};
     if (!lhsInt || !rhsInt)
-      return {unknown()};
+      return {Answer::unknown()};
     return {known(scope, *lhsInt * *rhsInt)};
   }
 };

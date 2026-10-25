@@ -27,18 +27,12 @@ unsigned failures = 0;
   } while (false)
 
 Answer integer(EvalValueStorageAllocator &allocator, int64_t value) {
-  return {EvalStatus::Completed,
-          IntEvalValue::get(allocator, APInt(32, value))};
+  return IntEvalValue::get(allocator, APInt(32, value));
 }
 
 bool isInteger(const Answer &answer, int64_t value) {
-  const auto &result = answer.getValue();
-  return answer.completed() && result &&
-         cast<IntEvalValue>(*result).getValue() == value;
-}
-
-bool isUnknown(const Answer &answer) {
-  return answer.completed() && !answer.getValue();
+  return answer.completed() && !answer.isUnknown() &&
+         cast<IntEvalValue>(*answer.getValue()).getValue() == value;
 }
 
 struct OpaqueEvalValueStorage
@@ -59,18 +53,11 @@ struct Behavior {
   unsigned hashes = 0;
   unsigned evaluations = 0;
   std::function<EvalResult<bool>(Operation *, EvalScope &)> cacheable =
-      [](Operation *, EvalScope &) {
-        return EvalResult<bool>{EvalStatus::Completed, true};
-      };
+      [](Operation *, EvalScope &) { return true; };
   std::function<EvalResult<llvm::hash_code>(Operation *, EvalScope &)> hash =
-      [](Operation *op, EvalScope &) {
-        return EvalResult<llvm::hash_code>{EvalStatus::Completed,
-                                           llvm::hash_value(op)};
-      };
+      [](Operation *op, EvalScope &) { return llvm::hash_value(op); };
   std::function<EvalResult<bool>(Operation *, Operation *, EvalScope &)> equal =
-      [](Operation *op, Operation *other, EvalScope &) {
-        return EvalResult<bool>{EvalStatus::Completed, op == other};
-      };
+      [](Operation *op, Operation *other, EvalScope &) { return op == other; };
   std::function<SmallVector<Answer>(Operation *, EvalScope &)> evaluate =
       [](Operation *op, EvalScope &scope) {
         for (Value operand : op->getOperands()) {
@@ -113,9 +100,7 @@ struct TestModel
 };
 
 void uncacheable(Operation *op) {
-  behaviors.at(op).cacheable = [](Operation *, EvalScope &) {
-    return EvalResult<bool>{EvalStatus::Completed, false};
-  };
+  behaviors.at(op).cacheable = [](Operation *, EvalScope &) { return false; };
 }
 
 DialectRegistry registry() {
@@ -157,9 +142,7 @@ struct Fixture {
 
   Operation *hashedOp(llvm::hash_code key, unsigned results = 1) {
     Operation *result = op(results);
-    behaviors.at(result).hash = [key](Operation *, EvalScope &) {
-      return EvalResult<llvm::hash_code>{EvalStatus::Completed, key};
-    };
+    behaviors.at(result).hash = [key](Operation *, EvalScope &) { return key; };
     return result;
   }
 };
@@ -171,26 +154,24 @@ void semanticKey(Operation *op) {
     if (!answer.completed())
       return answer.status;
     if (const auto &value = answer.getValue())
-      return {EvalStatus::Completed, value->hash()};
-    return {EvalStatus::Completed,
-            llvm::hash_value(op->getOperand(0).getAsOpaquePointer())};
+      return value->hash();
+    return llvm::hash_value(op->getOperand(0).getAsOpaquePointer());
   };
   behaviors.at(op).equal = [](Operation *op, Operation *other,
                               EvalScope &scope) -> EvalResult<bool> {
     if (op->getName() != other->getName() || other->getNumOperands() != 1 ||
         op->getResultTypes() != other->getResultTypes())
-      return {EvalStatus::Completed, false};
+      return false;
     Answer lhs = scope.query(op->getOperand(0));
     if (!lhs.completed())
       return lhs.status;
     Answer rhs = scope.query(other->getOperand(0));
     if (!rhs.completed())
       return rhs.status;
-    if (!lhs.getValue() || !rhs.getValue())
-      return {EvalStatus::Completed,
-              !lhs.getValue() && !rhs.getValue() &&
-                  op->getOperand(0) == other->getOperand(0)};
-    return {EvalStatus::Completed, lhs.getValue()->isEqual(*rhs.getValue())};
+    if (lhs.isUnknown() || rhs.isUnknown())
+      return lhs.isUnknown() && rhs.isUnknown() &&
+             op->getOperand(0) == other->getOperand(0);
+    return lhs.getValue()->isEqual(*rhs.getValue());
   };
 }
 
@@ -200,7 +181,7 @@ void sizeEligibility(Operation *op, int64_t size) {
   op->setAttr("size", Builder(op->getContext()).getI64IntegerAttr(size));
   behaviors.at(op).cacheable = [](Operation *op, EvalScope &) {
     auto size = op->getAttrOfType<IntegerAttr>("size");
-    return EvalResult<bool>{EvalStatus::Completed, size.getInt() >= 100};
+    return size.getInt() >= 100;
   };
 }
 
@@ -212,16 +193,14 @@ void operandEligibility(Operation *op) {
     if (!size.completed())
       return size.status;
     const auto &value = size.getValue();
-    return {EvalStatus::Completed,
-            value && cast<IntEvalValue>(*value).getValue().sge(100)};
+    return value && cast<IntEvalValue>(*value).getValue().sge(100);
   };
 }
 
 /// Makes `op` answer with a new `OpaqueEvalValue` on every evaluation.
 void opaque(Operation *op) {
   behaviors.at(op).evaluate = [](Operation *, EvalScope &scope) {
-    return SmallVector<Answer>{
-        {EvalStatus::Completed, OpaqueEvalValue::get(scope.getAllocator())}};
+    return SmallVector<Answer>{OpaqueEvalValue::get(scope.getAllocator())};
   };
 }
 
@@ -263,8 +242,7 @@ void testZeroHashCollision() {
   auto comparison =
       cast<EvaluableOpInterface>(second).isEquivalentTo(first, scope);
   CHECK(comparison.completed());
-  CHECK(comparison.getValue().has_value());
-  CHECK(!*comparison.getValue());
+  CHECK(!comparison.getValue());
   CHECK(isInteger(engine.query(first->getResult(0)), 7));
   CHECK(isInteger(engine.query(second->getResult(0)), 8));
   CHECK(behaviors.at(first).evaluations == 1);
@@ -280,8 +258,7 @@ void testPartialResultsAndLifetime() {
   behaviors.at(op).evaluate = [](Operation *op, EvalScope &scope) {
     if (behaviors.at(op).evaluations == 1)
       return SmallVector<Answer>{integer(scope.getAllocator(), 5),
-                                 {EvalStatus::Completed, std::nullopt},
-                                 EvalStatus::Exhausted};
+                                 Answer::unknown(), EvalStatus::Exhausted};
     return SmallVector<Answer>{integer(scope.getAllocator(), 99),
                                integer(scope.getAllocator(), 99),
                                integer(scope.getAllocator(), 13)};
@@ -291,15 +268,15 @@ void testPartialResultsAndLifetime() {
     Engine engine(f.evalContext, 1);
     Answer exhausted = engine.query(op->getResult(2));
     CHECK(exhausted.status == EvalStatus::Exhausted);
-    CHECK(!exhausted.getValue());
+    CHECK(!exhausted.isUnknown());
     first = engine.query(op->getResult(0));
     CHECK(isInteger(*first, 5));
-    CHECK(isUnknown(engine.query(op->getResult(1))));
+    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(behaviors.at(op).evaluations == 1);
     CHECK(isInteger(engine.query(op->getResult(2)), 13));
     CHECK(behaviors.at(op).evaluations == 2);
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
-    CHECK(isUnknown(engine.query(op->getResult(1))));
+    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(first->getValue()->isCached());
     f.evalContext.clearCache();
     CHECK(isInteger(engine.query(op->getResult(0)), 99));
@@ -322,7 +299,7 @@ void testPartialHitFillsWithoutSearching() {
   unsigned comparisons = 0;
   behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
     ++comparisons;
-    return EvalResult<bool>{EvalStatus::Completed, other == candidate};
+    return other == candidate;
   };
   behaviors.at(op).evaluate = [](Operation *, EvalScope &scope) {
     return SmallVector<Answer>{integer(scope.getAllocator(), 7),
@@ -357,7 +334,7 @@ void testSignalsAndOptOut() {
     };
     Answer hashFailure = engine.query(unhashable->getResult(0));
     CHECK(hashFailure.status == signal);
-    CHECK(!hashFailure.getValue());
+    CHECK(!hashFailure.isUnknown());
     CHECK(behaviors.at(unhashable).evaluations == 0);
 
     // An equivalence signal skips the candidate instead of failing the lookup.
@@ -399,9 +376,7 @@ void populate(Fixture &f, EvalScope &scope, llvm::hash_code key,
 Operation *equivalentTo(Fixture &f, llvm::hash_code key, Operation *op) {
   Operation *equivalent = f.hashedOp(key);
   behaviors.at(equivalent).equal = [op](Operation *, Operation *other,
-                                        EvalScope &) {
-    return EvalResult<bool>{EvalStatus::Completed, other == op};
-  };
+                                        EvalScope &) { return other == op; };
   behaviors.at(equivalent).evaluate = [](Operation *, EvalScope &scope) {
     return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
   };
@@ -423,7 +398,7 @@ void testNestedInsertionDuringLookup() {
       populated = true;
       populate(f, scope, key, equivalent);
     }
-    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
+    return other == equivalent;
   };
   CHECK(isInteger(engine.query(query->getResult(0)), 8));
   CHECK(populated);
@@ -449,7 +424,7 @@ void testNestedInsertionDuringInsert() {
       populated = true;
       populate(f, scope, key, equivalent);
     }
-    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
+    return other == equivalent;
   };
   CHECK(isInteger(engine.query(op->getResult(0)), 8));
   CHECK(populated);
@@ -472,7 +447,7 @@ void testInsertResumesSearch() {
   std::map<Operation *, unsigned> comparisons;
   behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
     ++comparisons[other];
-    return EvalResult<bool>{EvalStatus::Completed, false};
+    return false;
   };
   Answer answer = engine.query(op->getResult(0));
   CHECK(isInteger(answer, 7));
@@ -496,7 +471,7 @@ void testEquivalenceConsumesBudget() {
                                     EvalScope &scope) {
     scope.query(n1->getResult(0));
     scope.query(n2->getResult(0));
-    return EvalResult<bool>{EvalStatus::Completed, false};
+    return false;
   };
   // Comparing with `candidate` spends both steps, and skipping it refunds
   // nothing.
@@ -518,7 +493,7 @@ void testResultCountFilter() {
   // Deliberately wrong: claims equivalence with every candidate.
   behaviors.at(op).equal = [&](Operation *, Operation *, EvalScope &) {
     ++comparisons;
-    return EvalResult<bool>{EvalStatus::Completed, true};
+    return true;
   };
   CHECK(isInteger(engine.query(op->getResult(0)), 7));
   CHECK(comparisons == 0);
@@ -533,7 +508,7 @@ void testInsertionAfterEvaluation() {
   Operation *equivalent = equivalentTo(f, key, op);
   behaviors.at(op).equal = [equivalent](Operation *, Operation *other,
                                         EvalScope &) {
-    return EvalResult<bool>{EvalStatus::Completed, other == equivalent};
+    return other == equivalent;
   };
   behaviors.at(op).evaluate = [equivalent](Operation *, EvalScope &scope) {
     scope.query(equivalent->getResult(0));
@@ -559,7 +534,7 @@ void testCycleThroughEquivalence() {
     recorded = answer.status;
     if (!answer.completed())
       return answer.status;
-    return {EvalStatus::Completed, false};
+    return false;
   };
   CHECK(isInteger(engine.query(op->getResult(0)), 7));
   CHECK(recorded == EvalStatus::Cycle);
@@ -575,11 +550,11 @@ void testCycleThroughHash() {
     Answer answer = scope.query(op->getResult(0));
     if (!answer.completed())
       return answer.status;
-    return {EvalStatus::Completed, llvm::hash_value(op)};
+    return llvm::hash_value(op);
   };
   Answer cycle = engine.query(op->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
-  CHECK(!cycle.getValue());
+  CHECK(!cycle.isUnknown());
   CHECK(behaviors.at(op).evaluations == 0);
   // `op` must have left the active set on the early return.
   behaviors.at(op).hash = Behavior().hash;
@@ -595,7 +570,7 @@ void testCycleThroughOperands() {
   x->setOperands(y->getResult(0));
   Answer cycle = engine.query(x->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
-  CHECK(!cycle.getValue());
+  CHECK(!cycle.isUnknown());
   CHECK(behaviors.at(x).evaluations == 1);
   CHECK(behaviors.at(y).evaluations == 1);
   x->setOperands({});
@@ -729,7 +704,7 @@ void testEligibilitySignals() {
     CacheOutcome outcome;
     Answer answer = engine.query(op->getResult(0), outcome);
     CHECK(answer.status == signal);
-    CHECK(!answer.getValue());
+    CHECK(!answer.isUnknown());
     CHECK(outcome == CacheOutcome::None);
     CHECK(behaviors.at(op).hashes == 0);
     CHECK(behaviors.at(op).evaluations == 0);
@@ -745,7 +720,7 @@ void testCycleThroughEligibility() {
     Answer answer = scope.query(op->getResult(0));
     if (!answer.completed())
       return answer.status;
-    return {EvalStatus::Completed, true};
+    return true;
   };
   Answer cycle = engine.query(op->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
@@ -777,8 +752,8 @@ void testUncacheableOpsCanBeKeyed() {
     auto different = key.isEquivalentTo(z, scope);
     bool keyed = hash.completed() && otherHash.completed() &&
                  same.completed() && different.completed() &&
-                 *hash.getValue() == *otherHash.getValue() &&
-                 *same.getValue() && !*different.getValue();
+                 hash.getValue() == otherHash.getValue() && same.getValue() &&
+                 !different.getValue();
     return SmallVector<Answer>{integer(scope.getAllocator(), keyed)};
   };
   CHECK(isInteger(engine.query(outer->getResult(0)), 1));

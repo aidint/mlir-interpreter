@@ -45,7 +45,7 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
       "::mlir::interpreter::EvalResult<bool>", "isCacheable",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
-        return {::mlir::interpreter::EvalStatus::Completed, true};
+        return true;
       }]>
   ];
 }

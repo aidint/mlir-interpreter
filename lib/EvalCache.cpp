@@ -26,9 +26,7 @@ CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
     auto equivalent = op.isEquivalentTo(entry->op, scope);
     if (!equivalent.completed())
       continue;
-    assert(equivalent.getValue() &&
-           "completed equivalence must provide a result");
-    if (*equivalent.getValue())
+    if (equivalent.getValue())
       return entry;
   }
 }
@@ -36,13 +34,11 @@ CacheEntry *EvalCache::findEquivalent(EvaluableOpInterface op,
 EvalResult<CacheLookup> EvalCache::lookup(Operation *op, EvalScope &scope) {
   auto evaluable = cast<EvaluableOpInterface>(op);
   auto hash = evaluable.getHash(scope);
-  const auto &hashValue = hash.getValue();
   if (!hash.completed())
     return hash.status;
-  assert(hashValue && "completed hashing must provide a hash");
-  CacheLookup result{*hashValue, nullptr, 0};
+  CacheLookup result{hash.getValue(), nullptr, 0};
   result.entry = findEquivalent(evaluable, result.key, result.searched, scope);
-  return {EvalStatus::Completed, result};
+  return result;
 }
 
 CacheEntry *EvalCache::insert(Operation *op, const CacheLookup &lookup,
