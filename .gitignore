@@ -6,3 +6,4 @@ CLAUDE.md
 AGENTS.md
 specs
 .clangd
+/tablegen_compile_commands.yml
