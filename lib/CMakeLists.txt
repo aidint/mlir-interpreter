@@ -16,6 +16,7 @@ target_include_directories(InterpreterInterfaces PUBLIC
 target_link_libraries(InterpreterInterfaces PUBLIC
   mlir-submodule
   MLIRIR
+  MLIRSideEffectInterfaces
   MLIRSupport)
 
 add_library(Interpreter Engine.cpp EvalCache.cpp)

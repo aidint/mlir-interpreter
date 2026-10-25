@@ -18,6 +18,8 @@ target_link_libraries(eval-cache-test PRIVATE
   InterpreterBuiltin
   MLIRArithDialect
   MLIRIR
+  MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRSupport
   LLVMSupport)
 
