@@ -16,6 +16,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Allocator.h"
 
+#include <cassert>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -28,7 +29,6 @@ namespace mlir::interpreter {
 
 class Engine;
 class EvalScope;
-class EvaluableAttrInterface;
 class EvaluableOpInterface;
 
 namespace detail {
@@ -95,11 +95,15 @@ private:
   /// match, or at the bucket size on a miss.
   CacheEntry *findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
                              size_t &next, EvalScope &scope);
-  /// Returns the value of a constant with `attr` and `type`, converting `attr`
-  /// into the cache on a miss, or nothing when `attr` has no value. `hit` is
-  /// set when the value was already cached. `attr` must be cacheable.
-  std::optional<EvalValue> getConstant(EvaluableAttrInterface attr, Type type,
-                                       bool &hit);
+  /// Returns the cached value of a constant with `attr` and `type`, or null.
+  EvalValue lookupConstant(Attribute attr, Type type) const {
+    return constants.lookup({attr, type});
+  }
+  /// Stores `value` as the value of a constant with `attr` and `type`.
+  void insertConstant(Attribute attr, Type type, EvalValue value) {
+    assert(value.isCached() && "constants must be converted into the cache");
+    constants.try_emplace({attr, type}, value);
+  }
 
   EvalValueStorageAllocator allocator;
   DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;

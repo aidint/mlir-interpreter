@@ -10,9 +10,12 @@ def EvaluableAttrInterface : AttrInterface<"EvaluableAttrInterface"> {
   let cppNamespace = "::mlir::interpreter";
 
   let methods = [
-    InterfaceMethod<
-      "Returns the interpreter value this attribute denotes, if any.",
-      "::std::optional<::mlir::interpreter::EvalValue>", "toEvalValue",
+    InterfaceMethod<[{
+        Returns the interpreter value this attribute denotes, or null when the
+        model has no value for this instance, e.g. a float type it doesn't
+        support.
+      }],
+      "::mlir::interpreter::EvalValue", "toEvalValue",
       (ins "::mlir::interpreter::EvalValueStorageAllocator &":$allocator)>,
     InterfaceMethod<[{
         Returns whether this attribute's value is kept across queries. Most

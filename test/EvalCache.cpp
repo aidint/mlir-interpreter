@@ -132,11 +132,10 @@ struct PoisonBehavior {
 /// same instance.
 struct PoisonAttrEval
     : EvaluableAttrInterface::ExternalModel<PoisonAttrEval, ub::PoisonAttr> {
-  std::optional<EvalValue>
-  toEvalValue(Attribute, EvalValueStorageAllocator &allocator) const {
+  EvalValue toEvalValue(Attribute, EvalValueStorageAllocator &allocator) const {
     ++poison.conversions;
     if (!poison.known)
-      return std::nullopt;
+      return {};
     return OpaqueEvalValue::get(allocator);
   }
 

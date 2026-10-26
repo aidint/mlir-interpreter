@@ -68,9 +68,13 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
   if (!evaluable) {
-    if (op->hasTrait<OpTrait::ConstantLike>())
-      return evaluateConstant(op, outcome);
-    LDBG() << "no evaluation function for '" << op->getName() << "'";
+    if (!op->hasTrait<OpTrait::ConstantLike>()) {
+      LDBG() << "no evaluation function for '" << op->getName() << "'";
+      return Answer::unknown();
+    }
+    // A null value must not reach `Answer`, which would hold it as known.
+    if (EvalValue value = evaluateConstant(op, outcome))
+      return value;
     return Answer::unknown();
   }
 
@@ -141,23 +145,31 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   return results[result.getResultNumber()];
 }
 
-std::optional<EvalValue> Engine::evaluateConstant(Operation *op,
-                                                  CacheOutcome *outcome) {
+EvalValue Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
   Attribute attr;
   if (!matchPattern(op, m_Constant(&attr)))
-    return std::nullopt;
+    return {};
   auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
   if (!evaluable) {
     LDBG() << "no interpreter value for attribute " << attr;
-    return std::nullopt;
+    return {};
   }
   if (!evaluable.isCacheable())
     return evaluable.toEvalValue(*queryAllocator);
-  bool hit;
-  std::optional<EvalValue> value =
-      ctx.getCache().getConstant(evaluable, op->getResult(0).getType(), hit);
+  detail::EvalCache &cache = ctx.getCache();
+  Type type = op->getResult(0).getType();
+  if (EvalValue cached = cache.lookupConstant(attr, type)) {
+    if (outcome)
+      *outcome = CacheOutcome::Hit;
+    return cached;
+  }
   if (outcome)
-    *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
+    *outcome = CacheOutcome::Miss;
+  // Converting straight into the cache needs no copy. Unknowns are cheap, so
+  // they aren't stored.
+  EvalValue value = evaluable.toEvalValue(cache.allocator);
+  if (value)
+    cache.insertConstant(attr, type, value);
   return value;
 }
 
