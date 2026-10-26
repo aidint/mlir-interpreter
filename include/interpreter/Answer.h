@@ -10,16 +10,15 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <cassert>
-#include <optional>
 
 namespace mlir::interpreter {
 
 /// This class represents the answer for a value: a signal, or a completed
-/// value that is unknown when absent.
-struct Answer : EvalResult<std::optional<EvalValue>> {
+/// value that is unknown when null.
+struct Answer : EvalResult<EvalValue> {
   using EvalResult::EvalResult;
 
-  static Answer unknown() { return std::nullopt; }
+  static Answer unknown() { return EvalValue(); }
 
   /// Returns whether this answer completed without a value. A signal is not
   /// unknown.

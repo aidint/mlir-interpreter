@@ -70,8 +70,8 @@ struct XOrIOpEval
       return rhs.propagate(op);
     if (lhs.isUnknown() || rhs.isUnknown())
       return {Answer::unknown()};
-    const APInt &lhsInt = cast<IntEvalValue>(*lhs.getValue()).getValue();
-    const APInt &rhsInt = cast<IntEvalValue>(*rhs.getValue()).getValue();
+    const APInt &lhsInt = cast<IntEvalValue>(lhs.getValue()).getValue();
+    const APInt &rhsInt = cast<IntEvalValue>(rhs.getValue()).getValue();
     return {TrackedEvalValue::get(scope.getAllocator(), lhsInt ^ rhsInt)};
   }
 
@@ -92,9 +92,9 @@ func.func @f() -> (i32, i32) {
 
 const APInt *getTracked(const Answer &answer) {
   const auto &value = answer.getValue();
-  if (!value || !*value)
+  if (!value)
     return nullptr;
-  auto tracked = dyn_cast<TrackedEvalValue>(*value);
+  auto tracked = dyn_cast<TrackedEvalValue>(value);
   return tracked ? &tracked.getValue() : nullptr;
 }
 
@@ -139,7 +139,7 @@ int main() {
 
     Answer first = engine.query(uncached[0]);
     CHECK(first.completed());
-    CHECK(first.getValue() && !first.getValue()->isCached());
+    CHECK(first.getValue() && !first.getValue().isCached());
     CHECK(getTracked(first) && *getTracked(first) == 5);
     CHECK(liveTracked == 1);
 
@@ -149,17 +149,17 @@ int main() {
     CHECK(liveTracked == 2);
 
     CHECK(getTracked(first) && *getTracked(first) == 5);
-    CHECK(first.getValue()->getImpl() != second.getValue()->getImpl());
+    CHECK(first.getValue().getImpl() != second.getValue().getImpl());
 
     Answer constant = engine.query(constants[0]);
     CHECK(constant.completed());
-    CHECK(constant.getValue() && !constant.getValue()->isCached());
-    CHECK(cast<IntEvalValue>(*constant.getValue()).getValue() == 7);
+    CHECK(constant.getValue() && !constant.getValue().isCached());
+    CHECK(cast<IntEvalValue>(constant.getValue()).getValue() == 7);
     CHECK(liveTracked == 2);
 
     Answer again = engine.query(uncached[0]);
     CHECK(getTracked(again) && *getTracked(again) == 5);
-    CHECK(again.getValue()->getImpl() != first.getValue()->getImpl());
+    CHECK(again.getValue().getImpl() != first.getValue().getImpl());
     CHECK(liveTracked == 3);
   }
   CHECK(liveTracked == 0);

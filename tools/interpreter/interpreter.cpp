@@ -101,7 +101,7 @@ static std::string printEvaluated(const Answer &answer) {
   const auto &value = answer.getValue();
   if (!value)
     return "unknown";
-  if (auto integer = dyn_cast<IntEvalValue>(*value)) {
+  if (auto integer = dyn_cast<IntEvalValue>(value)) {
     const APInt &bits = integer.getValue();
     // Printed as signed, an i1 `true` would read as -1.
     if (bits.getBitWidth() == 1)

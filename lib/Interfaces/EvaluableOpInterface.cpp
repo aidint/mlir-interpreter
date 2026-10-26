@@ -8,7 +8,7 @@ EvalResult<llvm::hash_code> hashEvaluatedValue(Value value, EvalScope &scope) {
   if (!answer.completed())
     return answer.status;
   if (const auto &known = answer.getValue())
-    return known->hash();
+    return known.hash();
   return mlir::hash_value(value);
 }
 
@@ -25,7 +25,7 @@ EvalResult<bool> isEvaluatedValueEqual(Value lhs, Value rhs, EvalScope &scope) {
   if (!rhsAnswer.completed())
     return rhsAnswer.status;
   const auto &rhsValue = rhsAnswer.getValue();
-  return rhsValue && lhsValue->isEqual(*rhsValue);
+  return rhsValue && lhsValue.isEqual(rhsValue);
 }
 
 EvalResult<llvm::hash_code> detail::getDefaultHash(Operation *op,

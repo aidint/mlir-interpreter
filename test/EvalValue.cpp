@@ -1,4 +1,5 @@
 #include "interpreter/EvalValue.h"
+#include "interpreter/Answer.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalValueStorageAllocator.h"
@@ -134,6 +135,18 @@ void testHashCollisions() {
   CHECK(collidingComparisons == 2);
 }
 
+void testAnswerStates() {
+  Fixture f;
+  CHECK(Answer::unknown().isUnknown());
+  // Unknown is a completed answer holding null, so a null value converts to it.
+  CHECK(Answer(EvalValue()).isUnknown());
+  CHECK(!Answer(f.integer(32, 5)).isUnknown());
+  CHECK(!Answer(EvalStatus::Exhausted).isUnknown());
+}
+
+// A status and a handle, with no optional's flag: 16 bytes on 64-bit hosts.
+static_assert(sizeof(Answer) == 2 * sizeof(void *));
+
 } // namespace
 
 int main() {
@@ -141,6 +154,7 @@ int main() {
   testContentEquality();
   testDifferentClasses();
   testHashCollisions();
+  testAnswerStates();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
