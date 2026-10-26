@@ -1,10 +1,12 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/Engine.h"
+#include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -117,6 +119,29 @@ void uncacheable(Operation *op) {
   behaviors.at(op).cacheable = [](Operation *, EvalScope &) { return false; };
 }
 
+/// How the test model of `#ub.poison` converts it; reset by each `Fixture`.
+struct PoisonBehavior {
+  bool cacheable = true;
+  bool known = true;
+  unsigned conversions = 0;
+} poison;
+
+/// This class represents a test model for `#ub.poison`, which `ub.poison`
+/// folds to whatever its type, so constants with one attribute can differ in
+/// type. Its values keep the identity `isEqual`, so a shared value is the
+/// same instance.
+struct PoisonAttrEval
+    : EvaluableAttrInterface::ExternalModel<PoisonAttrEval, ub::PoisonAttr> {
+  EvalValue toEvalValue(Attribute, EvalValueStorageAllocator &allocator) const {
+    ++poison.conversions;
+    if (!poison.known)
+      return {};
+    return OpaqueEvalValue::get(allocator);
+  }
+
+  bool isCacheable(Attribute) const { return poison.cacheable; }
+};
+
 DialectRegistry registry() {
   DialectRegistry result;
   result.insert<arith::ArithDialect>();
@@ -132,8 +157,9 @@ struct Fixture {
 
   Fixture() {
     context.loadDialect<arith::ArithDialect, memref::MemRefDialect,
-                        scf::SCFDialect>();
+                        scf::SCFDialect, ub::UBDialect>();
     UnrealizedConversionCastOp::attachInterface<TestModel>(context);
+    ub::PoisonAttr::attachInterface<PoisonAttrEval>(context);
     arith::AddIOp::attachInterface<DefaultModel<arith::AddIOp>>(context);
     memref::LoadOp::attachInterface<DefaultModel<memref::LoadOp>>(context);
     scf::ExecuteRegionOp::attachInterface<DefaultModel<scf::ExecuteRegionOp>>(
@@ -142,7 +168,10 @@ struct Fixture {
     evalContext.registerEvalValues<OpaqueEvalValue>();
   }
 
-  ~Fixture() { behaviors.clear(); }
+  ~Fixture() {
+    behaviors.clear();
+    poison = {};
+  }
 
   Operation *op(unsigned results = 1, ValueRange operands = {}) {
     OperationState state(builder.getUnknownLoc(),
@@ -157,6 +186,17 @@ struct Fixture {
   Value constant(int64_t value) {
     return arith::ConstantIntOp::create(builder, builder.getUnknownLoc(), value,
                                         32);
+  }
+
+  /// Returns an uncacheable op's result that answers `value`. Unlike a
+  /// constant, it costs a step in every query.
+  Value uncached(int64_t value) {
+    Operation *result = op();
+    uncacheable(result);
+    behaviors.at(result).evaluate = [value](Operation *, EvalScope &scope) {
+      return SmallVector<Answer>{integer(scope.getAllocator(), value)};
+    };
+    return result->getResult(0);
   }
 
   Operation *hashedOp(llvm::hash_code key, unsigned results = 1) {
@@ -225,14 +265,12 @@ void opaque(Operation *op) {
 
 void testSemanticReuseAndBudget() {
   Fixture f;
-  Value firstConstant = f.constant(9);
-  Value secondConstant = f.constant(9);
-  Operation *first = f.op(1, firstConstant);
-  Operation *second = f.op(1, secondConstant);
+  Operation *first = f.op(1, f.uncached(9));
+  Operation *second = f.op(1, f.uncached(9));
   semanticKey(first);
   semanticKey(second);
 
-  // `first` costs 2 steps: hashing evaluates its constant, which evaluating
+  // `first` costs 2 steps: hashing evaluates its operand, which evaluating
   // `first` then reuses, and evaluating `first` takes the second.
   Engine oneStep(f.evalContext, 1);
   CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
@@ -241,8 +279,8 @@ void testSemanticReuseAndBudget() {
   CHECK(isInteger(twoSteps.query(first->getResult(0)), 7));
   CHECK(behaviors.at(first).evaluations == 1);
 
-  // `second` also costs 2 steps: hashing evaluates its constant, and comparing
-  // with `first` evaluates `first`'s constant, then hits.
+  // `second` also costs 2 steps: hashing evaluates its operand, and comparing
+  // with `first` evaluates `first`'s operand, then hits.
   CHECK(oneStep.query(second->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(isInteger(twoSteps.query(second->getResult(0)), 7));
   CHECK(behaviors.at(second).evaluations == 0);
@@ -668,12 +706,12 @@ void testEligibilityFromAttributes() {
 
 void testEligibilityFromOperands() {
   Fixture f;
-  Operation *large = f.op(1, f.constant(1000));
-  Operation *small = f.op(1, f.constant(10));
+  Operation *large = f.op(1, f.uncached(1000));
+  Operation *small = f.op(1, f.uncached(10));
   operandEligibility(large);
   operandEligibility(small);
 
-  // A miss on `large` costs 2 steps: eligibility evaluates its constant, which
+  // A miss on `large` costs 2 steps: eligibility evaluates its operand, which
   // evaluation then reuses, and evaluating `large` takes the second.
   Engine noSteps(f.evalContext, 0);
   CHECK(noSteps.query(large->getResult(0)).status == EvalStatus::Exhausted);
@@ -683,7 +721,7 @@ void testEligibilityFromOperands() {
   CHECK(behaviors.at(large).evaluations == 0);
   Engine twoSteps(f.evalContext, 2);
   CHECK(isInteger(twoSteps.query(large->getResult(0)), 7));
-  // A hit costs only the constant.
+  // A hit costs only the operand.
   CHECK(isInteger(oneStep.query(large->getResult(0)), 7));
   CHECK(behaviors.at(large).evaluations == 1);
 
@@ -881,6 +919,57 @@ void testSideEffectsOptOut() {
   }
 }
 
+void testConstants() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  auto poisonOf = [&](Type type) -> Value {
+    return ub::PoisonOp::create(f.builder, loc, type);
+  };
+  Value i32 = poisonOf(f.builder.getI32Type());
+  Value sameI32 = poisonOf(f.builder.getI32Type());
+  Value f32 = poisonOf(f.builder.getF32Type());
+  // Constants cost no step.
+  Engine noSteps(f.evalContext, 0);
+  CacheOutcome outcome;
+
+  Answer first = noSteps.query(i32, outcome);
+  CHECK(first.completed() && first.getValue()->isCached());
+  CHECK(outcome == CacheOutcome::Miss);
+  // Another op with the same attribute and type shares the value.
+  Answer shared = noSteps.query(sameI32, outcome);
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(shared.completed() && *shared.getValue() == *first.getValue());
+  // The same attribute with another type gets its own value.
+  Answer other = noSteps.query(f32, outcome);
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(other.completed() && *other.getValue() != *first.getValue());
+  CHECK(poison.conversions == 2);
+
+  f.evalContext.clearCache();
+  CHECK(noSteps.query(i32, outcome).completed());
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(poison.conversions == 3);
+
+  // Unknowns are stored too, so they're converted once.
+  Value unknown = poisonOf(f.builder.getI64Type());
+  poison.known = false;
+  for (CacheOutcome expected : {CacheOutcome::Miss, CacheOutcome::Hit}) {
+    CHECK(noSteps.query(unknown, outcome).isUnknown());
+    CHECK(outcome == expected);
+  }
+  CHECK(poison.conversions == 4);
+
+  // An attribute that doesn't opt in skips the map, though `i32` is in it.
+  poison.known = true;
+  poison.cacheable = false;
+  for (unsigned i = 0; i != 2; ++i) {
+    Answer answer = noSteps.query(i32, outcome);
+    CHECK(answer.completed() && !answer.getValue()->isCached());
+    CHECK(outcome == CacheOutcome::None);
+  }
+  CHECK(poison.conversions == 6);
+}
+
 }
 
 int main() {
@@ -910,6 +999,7 @@ int main() {
   testUncacheableOpsCanBeKeyed();
   testIdentityValueKeys();
   testSideEffectsOptOut();
+  testConstants();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

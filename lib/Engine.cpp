@@ -22,24 +22,6 @@ EvalValueStorageAllocator &EvalScope::getAllocator() {
   return engine.getQueryAllocator();
 }
 
-namespace {
-
-Answer evaluateConstant(Operation *op, EvalValueStorageAllocator &allocator) {
-  Attribute attr;
-  if (!matchPattern(op, m_Constant(&attr)))
-    return Answer::unknown();
-  auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
-  if (!evaluable) {
-    LDBG() << "no interpreter value for attribute " << attr;
-    return Answer::unknown();
-  }
-  if (auto value = evaluable.toEvalValue(allocator))
-    return value;
-  return Answer::unknown();
-}
-
-} // namespace
-
 Answer Engine::query(Value value) {
   CacheOutcome outcome;
   return query(value, outcome);
@@ -85,8 +67,14 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
 
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
-  if (!evaluable && !op->hasTrait<OpTrait::ConstantLike>()) {
-    LDBG() << "no evaluation function for '" << op->getName() << "'";
+  if (!evaluable) {
+    if (!op->hasTrait<OpTrait::ConstantLike>()) {
+      LDBG() << "no evaluation function for '" << op->getName() << "'";
+      return Answer::unknown();
+    }
+    // A null value must not reach `Answer`, which would hold it as known.
+    if (EvalValue value = evaluateConstant(op, outcome))
+      return value;
     return Answer::unknown();
   }
 
@@ -99,13 +87,10 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   EvalScope scope(*this);
   // Eligibility may query operands, so it runs inside the cycle guard and
   // shares the query's budget and memo with hashing and evaluation.
-  bool cacheable = false;
-  if (evaluable) {
-    auto eligible = evaluable.isCacheable(scope);
-    if (!eligible.completed())
-      return eligible.status;
-    cacheable = eligible.getValue();
-  }
+  auto eligible = evaluable.isCacheable(scope);
+  if (!eligible.completed())
+    return eligible.status;
+  bool cacheable = eligible.getValue();
 
   std::optional<detail::CacheLookup> cached;
   if (cacheable) {
@@ -128,12 +113,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     return EvalStatus::Exhausted;
   --remaining;
 
-  SmallVector<Answer> results;
-  if (!evaluable) {
-    results.push_back(evaluateConstant(op, *queryAllocator));
-  } else {
-    results = evaluable.evaluate(scope);
-  }
+  SmallVector<Answer> results = evaluable.evaluate(scope);
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
@@ -163,6 +143,32 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     if (const auto &slot = entry->results[result.getResultNumber()])
       return *slot;
   return results[result.getResultNumber()];
+}
+
+EvalValue Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
+  Attribute attr;
+  if (!matchPattern(op, m_Constant(&attr)))
+    return {};
+  auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
+  if (!evaluable) {
+    LDBG() << "no interpreter value for attribute " << attr;
+    return {};
+  }
+  if (!evaluable.isCacheable())
+    return evaluable.toEvalValue(*queryAllocator);
+  detail::EvalCache &cache = ctx.getCache();
+  Type type = op->getResult(0).getType();
+  bool hit;
+  EvalValue value = cache.lookupConstant(attr, type, hit);
+  if (outcome)
+    *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
+  if (hit)
+    return value;
+  // Converting straight into the cache needs no copy. A null value is stored
+  // too, so a constant without one isn't converted again.
+  value = evaluable.toEvalValue(cache.allocator);
+  cache.insertConstant(attr, type, value);
+  return value;
 }
 
 FailureOr<func::FuncOp>

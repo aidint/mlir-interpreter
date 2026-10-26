@@ -6,8 +6,6 @@
 
 #include "mlir/IR/Attributes.h"
 
-#include <optional>
-
 #include "interpreter/Interfaces/EvaluableAttrInterface.h.inc"
 
 #endif
