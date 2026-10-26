@@ -950,14 +950,14 @@ void testConstants() {
   CHECK(outcome == CacheOutcome::Miss);
   CHECK(poison.conversions == 3);
 
-  // Unknowns aren't stored, so they're converted on every query.
+  // Unknowns are stored too, so they're converted once.
   Value unknown = poisonOf(f.builder.getI64Type());
   poison.known = false;
-  for (unsigned i = 0; i != 2; ++i) {
+  for (CacheOutcome expected : {CacheOutcome::Miss, CacheOutcome::Hit}) {
     CHECK(noSteps.query(unknown, outcome).isUnknown());
-    CHECK(outcome == CacheOutcome::Miss);
+    CHECK(outcome == expected);
   }
-  CHECK(poison.conversions == 5);
+  CHECK(poison.conversions == 4);
 
   // An attribute that doesn't opt in skips the map, though `i32` is in it.
   poison.known = true;
@@ -967,7 +967,7 @@ void testConstants() {
     CHECK(answer.completed() && !answer.getValue()->isCached());
     CHECK(outcome == CacheOutcome::None);
   }
-  CHECK(poison.conversions == 7);
+  CHECK(poison.conversions == 6);
 }
 
 }

@@ -158,18 +158,16 @@ EvalValue Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
     return evaluable.toEvalValue(*queryAllocator);
   detail::EvalCache &cache = ctx.getCache();
   Type type = op->getResult(0).getType();
-  if (EvalValue cached = cache.lookupConstant(attr, type)) {
-    if (outcome)
-      *outcome = CacheOutcome::Hit;
-    return cached;
-  }
+  bool hit;
+  EvalValue value = cache.lookupConstant(attr, type, hit);
   if (outcome)
-    *outcome = CacheOutcome::Miss;
-  // Converting straight into the cache needs no copy. Unknowns are cheap, so
-  // they aren't stored.
-  EvalValue value = evaluable.toEvalValue(cache.allocator);
-  if (value)
-    cache.insertConstant(attr, type, value);
+    *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
+  if (hit)
+    return value;
+  // Converting straight into the cache needs no copy. A null value is stored
+  // too, so a constant without one isn't converted again.
+  value = evaluable.toEvalValue(cache.allocator);
+  cache.insertConstant(attr, type, value);
   return value;
 }
 

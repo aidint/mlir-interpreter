@@ -95,13 +95,19 @@ private:
   /// match, or at the bucket size on a miss.
   CacheEntry *findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
                              size_t &next, EvalScope &scope);
-  /// Returns the cached value of a constant with `attr` and `type`, or null.
-  EvalValue lookupConstant(Attribute attr, Type type) const {
-    return constants.lookup({attr, type});
+  /// Returns the cached value of a constant with `attr` and `type`, setting
+  /// `hit` to whether one is stored. A hit may return null, which means the
+  /// constant has no value.
+  EvalValue lookupConstant(Attribute attr, Type type, bool &hit) const {
+    auto it = constants.find({attr, type});
+    hit = it != constants.end();
+    return hit ? it->second : EvalValue();
   }
-  /// Stores `value` as the value of a constant with `attr` and `type`.
+  /// Stores `value`, or null for no value, as the value of a constant with
+  /// `attr` and `type`.
   void insertConstant(Attribute attr, Type type, EvalValue value) {
-    assert(value.isCached() && "constants must be converted into the cache");
+    assert((!value || value.isCached()) &&
+           "constants must be converted into the cache");
     constants.try_emplace({attr, type}, value);
   }
 
