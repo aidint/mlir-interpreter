@@ -36,7 +36,7 @@ Answer integer(EvalValueStorageAllocator &allocator, int64_t value) {
 
 bool isInteger(const Answer &answer, int64_t value) {
   return answer.completed() && !answer.isUnknown() &&
-         cast<IntEvalValue>(*answer.getValue()).getValue() == value;
+         cast<IntEvalValue>(answer.getValue()).getValue() == value;
 }
 
 struct OpaqueEvalValueStorage
@@ -213,7 +213,7 @@ void semanticKey(Operation *op) {
     if (!answer.completed())
       return answer.status;
     if (const auto &value = answer.getValue())
-      return value->hash();
+      return value.hash();
     return llvm::hash_value(op->getOperand(0).getAsOpaquePointer());
   };
   behaviors.at(op).equal = [](Operation *op, Operation *other,
@@ -230,7 +230,7 @@ void semanticKey(Operation *op) {
     if (lhs.isUnknown() || rhs.isUnknown())
       return lhs.isUnknown() && rhs.isUnknown() &&
              op->getOperand(0) == other->getOperand(0);
-    return lhs.getValue()->isEqual(*rhs.getValue());
+    return lhs.getValue().isEqual(rhs.getValue());
   };
 }
 
@@ -252,7 +252,7 @@ void operandEligibility(Operation *op) {
     if (!size.completed())
       return size.status;
     const auto &value = size.getValue();
-    return value && cast<IntEvalValue>(*value).getValue().sge(100);
+    return value && cast<IntEvalValue>(value).getValue().sge(100);
   };
 }
 
@@ -334,7 +334,7 @@ void testPartialResultsAndLifetime() {
     CHECK(behaviors.at(op).evaluations == 2);
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
     CHECK(engine.query(op->getResult(1)).isUnknown());
-    CHECK(first->getValue()->isCached());
+    CHECK(first->getValue().isCached());
     f.evalContext.clearCache();
     CHECK(isInteger(engine.query(op->getResult(0)), 99));
     CHECK(behaviors.at(op).evaluations == 3);
@@ -375,7 +375,7 @@ void testMissHashesOnce() {
   Operation *op = f.op(3);
   Answer answer = engine.query(op->getResult(0));
   CHECK(isInteger(answer, 7));
-  CHECK(answer.getValue()->isCached());
+  CHECK(answer.getValue().isCached());
   CHECK(behaviors.at(op).hashes == 1);
 }
 
@@ -405,7 +405,7 @@ void testSignalsAndOptOut() {
     };
     Answer skipped = engine.query(op->getResult(0));
     CHECK(isInteger(skipped, 7));
-    CHECK(skipped.getValue()->isCached());
+    CHECK(skipped.getValue().isCached());
     CHECK(behaviors.at(op).evaluations == 1);
     CHECK(isInteger(engine.query(op->getResult(0)), 7));
     CHECK(behaviors.at(op).evaluations == 1);
@@ -508,7 +508,7 @@ void testInsertResumesSearch() {
   };
   Answer answer = engine.query(op->getResult(0));
   CHECK(isInteger(answer, 7));
-  CHECK(answer.getValue()->isCached());
+  CHECK(answer.getValue().isCached());
   CHECK(comparisons[candidate] == 1);
   CHECK(comparisons[x] == 1);
 }
@@ -697,7 +697,7 @@ void testEligibilityFromAttributes() {
   for (unsigned i = 0; i != 2; ++i) {
     Answer answer = engine.query(small->getResult(0), outcome);
     CHECK(isInteger(answer, 7));
-    CHECK(!answer.getValue()->isCached());
+    CHECK(!answer.getValue().isCached());
     CHECK(outcome == CacheOutcome::None);
   }
   CHECK(behaviors.at(small).hashes == 0);
@@ -933,16 +933,16 @@ void testConstants() {
   CacheOutcome outcome;
 
   Answer first = noSteps.query(i32, outcome);
-  CHECK(first.completed() && first.getValue()->isCached());
+  CHECK(first.completed() && first.getValue().isCached());
   CHECK(outcome == CacheOutcome::Miss);
   // Another op with the same attribute and type shares the value.
   Answer shared = noSteps.query(sameI32, outcome);
   CHECK(outcome == CacheOutcome::Hit);
-  CHECK(shared.completed() && *shared.getValue() == *first.getValue());
+  CHECK(shared.completed() && shared.getValue() == first.getValue());
   // The same attribute with another type gets its own value.
   Answer other = noSteps.query(f32, outcome);
   CHECK(outcome == CacheOutcome::Miss);
-  CHECK(other.completed() && *other.getValue() != *first.getValue());
+  CHECK(other.completed() && other.getValue() != first.getValue());
   CHECK(poison.conversions == 2);
 
   f.evalContext.clearCache();
@@ -964,7 +964,7 @@ void testConstants() {
   poison.cacheable = false;
   for (unsigned i = 0; i != 2; ++i) {
     Answer answer = noSteps.query(i32, outcome);
-    CHECK(answer.completed() && !answer.getValue()->isCached());
+    CHECK(answer.completed() && !answer.getValue().isCached());
     CHECK(outcome == CacheOutcome::None);
   }
   CHECK(poison.conversions == 6);

@@ -40,7 +40,7 @@ Answer Engine::query(Value value, CacheOutcome &outcome) {
   Answer answer = compute(value, &outcome);
   if (answer.completed())
     if (const auto &value = answer.getValue())
-      answer.value = answerAllocator.retain(*value);
+      answer.value = answerAllocator.retain(value);
   queryAllocator.reset();
   queryAnswers.clear();
   return answer;
@@ -72,10 +72,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
       LDBG() << "no evaluation function for '" << op->getName() << "'";
       return Answer::unknown();
     }
-    // A null value must not reach `Answer`, which would hold it as known.
-    if (EvalValue value = evaluateConstant(op, outcome))
-      return value;
-    return Answer::unknown();
+    return evaluateConstant(op, outcome);
   }
 
   // Cache-key methods and graph-region operands can re-enter an operation

@@ -19,7 +19,7 @@ Answer known(EvalScope &scope, APInt value) {
 
 const APInt *getInt(const Answer &answer) {
   const auto &value = answer.getValue();
-  return value ? &cast<IntEvalValue>(*value).getValue() : nullptr;
+  return value ? &cast<IntEvalValue>(value).getValue() : nullptr;
 }
 
 bool isZero(const Answer &answer) {
@@ -88,7 +88,7 @@ EvalResult<BinaryKey> getKey(Operation *op, EvalScope &scope) {
     return zero;
   if (lhs.isUnknown() || rhs.isUnknown())
     return identity;
-  return BinaryKey{nullptr, false, *lhs.getValue(), *rhs.getValue()};
+  return BinaryKey{nullptr, false, lhs.getValue(), rhs.getValue()};
 }
 
 /// This class implements the semantic cache key of `arith.addi`,

@@ -75,7 +75,7 @@ void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
       continue;
     Answer retained = answer;
     if (const auto &value = answer.getValue())
-      retained.value = allocator.retain(*value);
+      retained.value = allocator.retain(value);
     slot = retained;
   }
 }

@@ -93,7 +93,7 @@ std::optional<bool> isOdd(const Answer &answer) {
   const auto &value = answer.getValue();
   if (!value)
     return std::nullopt;
-  return cast<IntEvalValue>(*value).getValue()[0];
+  return cast<IntEvalValue>(value).getValue()[0];
 }
 
 /// This class represents a custom key that reuses `EvalOperationEquivalence`

@@ -1,2 +1,3 @@
-# Checks value hashing and equality, by identity and by contents.
+# Checks value hashing and equality, by identity and by contents, and which
+# answers are unknown.
 RUN: eval-value-test
