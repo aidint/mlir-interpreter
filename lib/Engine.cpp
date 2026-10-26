@@ -141,28 +141,24 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   return results[result.getResultNumber()];
 }
 
-Answer Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
+std::optional<EvalValue> Engine::evaluateConstant(Operation *op,
+                                                  CacheOutcome *outcome) {
   Attribute attr;
   if (!matchPattern(op, m_Constant(&attr)))
-    return Answer::unknown();
+    return std::nullopt;
   auto evaluable = dyn_cast<EvaluableAttrInterface>(attr);
   if (!evaluable) {
     LDBG() << "no interpreter value for attribute " << attr;
-    return Answer::unknown();
+    return std::nullopt;
   }
-  std::optional<EvalValue> value;
-  if (evaluable.isCacheable()) {
-    bool hit;
-    value =
-        ctx.getCache().getConstant(evaluable, op->getResult(0).getType(), hit);
-    if (outcome)
-      *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
-  } else {
-    value = evaluable.toEvalValue(*queryAllocator);
-  }
-  if (value)
-    return *value;
-  return Answer::unknown();
+  if (!evaluable.isCacheable())
+    return evaluable.toEvalValue(*queryAllocator);
+  bool hit;
+  std::optional<EvalValue> value =
+      ctx.getCache().getConstant(evaluable, op->getResult(0).getType(), hit);
+  if (outcome)
+    *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
+  return value;
 }
 
 FailureOr<func::FuncOp>

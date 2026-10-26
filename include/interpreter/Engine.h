@@ -55,10 +55,12 @@ private:
   /// lookup outcome of its operation.
   // TODO: Remove `CacheOutcome` in favor of a better way to report lookups.
   Answer compute(Value value, CacheOutcome *outcome = nullptr);
-  /// Converts the attribute a constant-like op folds to. Constants have no
-  /// operands, so they cost no step, and only cacheable attributes are looked
-  /// up in the cache.
-  Answer evaluateConstant(Operation *op, CacheOutcome *outcome);
+  /// Converts the attribute a constant-like op folds to, or returns nothing
+  /// when it has no value. Constants have no operands, so they cost no step
+  /// and never signal, and only cacheable attributes are looked up in the
+  /// cache.
+  std::optional<EvalValue> evaluateConstant(Operation *op,
+                                            CacheOutcome *outcome);
 
   EvalContext &ctx;
   uint64_t budget;
