@@ -44,13 +44,35 @@ public:
                                      ArrayRef<std::optional<EvalValue>> args);
 
 private:
+  friend class BlockBinding;
   friend class EvalScope;
+
+  /// This class represents the arguments of one block, bound for one loop
+  /// iteration.
+  struct BindingFrame {
+    Block *block;
+    /// Values defined in `block`'s region that were memoized in this
+    /// iteration.
+    SmallVector<Value> memoized;
+  };
 
   EvalValueStorageAllocator &getQueryAllocator() { return *queryAllocator; }
   Answer queryNested(Value value);
+  /// Binds `block`'s arguments to `args` for one iteration, or returns false
+  /// when the budget ran out.
+  bool bind(Block *block, ArrayRef<Answer> args);
+  /// Unbinds the innermost frame, which must belong to `block`, and drops the
+  /// answers memoized in it.
+  void unbind(Block *block);
+  /// Returns whether `op` is nested in the region of a bound block, so its
+  /// operands may depend on the current bindings.
+  bool isInBoundRegion(Operation *op) const;
   /// Returns the answer for `value`, reusing one completed earlier in this
   /// query.
   Answer evaluate(Value value);
+  /// Memoizes `answer` until the innermost frame whose region contains
+  /// `value`'s definition ends, or for the whole query outside every frame.
+  void memoize(Value value, const Answer &answer);
   /// Computes the answer for `value`, setting `outcome`, if given, to the
   /// lookup outcome of its operation.
   // TODO: Remove `CacheOutcome` in favor of a better way to report lookups.
@@ -70,6 +92,9 @@ private:
   /// Completed answers of the current query; cleared with the query allocator
   /// their values may live in.
   DenseMap<Value, Answer> queryAnswers;
+  /// The blocks bound in the current query, most recent last.
+  SmallVector<BindingFrame> frames;
+  DenseMap<BlockArgument, Answer> bindings;
 };
 
 StringRef stringifyEvalStatus(EvalStatus status);

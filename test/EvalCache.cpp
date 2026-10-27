@@ -1,5 +1,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
+#include "interpreter/Dialects/SCF/SCFEval.h"
 #include "interpreter/Engine.h"
 #include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
@@ -146,6 +147,7 @@ DialectRegistry registry() {
   DialectRegistry result;
   result.insert<arith::ArithDialect>();
   registerBuiltinAttrEvalExternalModels(result);
+  registerSCFEvalExternalModels(result);
   return result;
 }
 
@@ -970,6 +972,52 @@ void testConstants() {
   CHECK(poison.conversions == 6);
 }
 
+void testLoopBodySkipsCache() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  // The body adds 1 to the iteration argument.
+  Behavior &behavior = behaviors.at(body);
+  behavior.evaluate = [](Operation *op, EvalScope &scope) {
+    Answer acc = scope.query(op->getOperand(0));
+    if (!acc.completed())
+      return acc.propagate(op);
+    if (acc.isUnknown())
+      return SmallVector<Answer>{acc};
+    const APInt &value = cast<IntEvalValue>(acc.getValue()).getValue();
+    return SmallVector<Answer>{
+        IntEvalValue::get(scope.getAllocator(), value + 1)};
+  };
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+
+  // Each iteration evaluates the body again, without a lookup.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behavior.evaluations == 3);
+  CHECK(behavior.eligibilityChecks == 0 && behavior.hashes == 0);
+
+  // The loop itself is cached.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behavior.evaluations == 3);
+
+  // Outside an iteration, the iteration argument is unknown, and the body is
+  // cached as usual.
+  CHECK(engine.query(body->getResult(0), outcome).isUnknown());
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behavior.eligibilityChecks == 1 && behavior.hashes == 1);
+}
+
 }
 
 int main() {
@@ -1000,6 +1048,7 @@ int main() {
   testIdentityValueKeys();
   testSideEffectsOptOut();
   testConstants();
+  testLoopBodySkipsCache();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

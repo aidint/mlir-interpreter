@@ -16,6 +16,7 @@ add_executable(eval-cache-test EvalCache.cpp)
 target_link_libraries(eval-cache-test PRIVATE
   Interpreter
   InterpreterBuiltin
+  InterpreterSCF
   MLIRArithDialect
   MLIRIR
   MLIRMemRefDialect

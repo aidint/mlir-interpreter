@@ -34,6 +34,7 @@ build/debug/third_party/llvm-project/llvm/bin/llvm-lit build/debug/examples/05-z
   - `InterpreterBuiltin`: builtin values and attribute models
     (`registerBuiltinEvalValues`).
   - `InterpreterArith`: `arith` external models (`registerArithEvalExternalModels`).
+  - `InterpreterSCF`: the `scf.for` model (`registerSCFEvalExternalModels`).
 - `tools/interpreter/`: the `interpreter` tool.
 - `examples/`: MLIR modules for the tool. Each checks its own report with
   `RUN` and `CHECK` lines.
@@ -55,14 +56,15 @@ all queries share one cache. It prints one row per result:
 - `status`: `completed`, `exhausted`, `needs order` or `cycle`.
 
 Values are queried on demand, so a row doesn't depend on which branch would
-run. Block arguments, including `@main`'s, and results of ops without an
-evaluation function (`scf.if`, `func.call`, ...) are `unknown`. The tool reports
-an error only when there is no `@main` or it has no body.
+run. Block arguments are known only while a loop iteration binds them, so
+`@main`'s arguments, and rows inside a loop body, are `unknown`, as are results
+of ops without an evaluation function (`scf.if`, `func.call`, ...). The tool
+reports an error only when there is no `@main` or it has no body.
 
 `--budget=N` (default 1000) is the step budget of each reported value: it is
 reset for every row, while the cache is kept for the whole run. Hashing,
-equality and evaluation share that budget. Each evaluated operation costs a
-step, while constants cost none. A hit can still spend budget computing its
+equality and evaluation share that budget. Each evaluated operation, and each
+loop iteration, costs a step, while constants cost none. A hit can still spend budget computing its
 key, since keys hold evaluated operands, but only for operands that are neither
 constants nor cached.
 
@@ -178,6 +180,45 @@ value   evaluated   cache    status
 With `--budget=0` only constants and `unknown` values complete. A query runs out
 either after the lookup (`miss`, as for `%s`) or during hashing (`—`, as for
 `%f`, whose operand `%s` was never cached).
+
+`scf.for` binds its induction variable and iteration arguments for each
+iteration, and nested loops iterate inside the outer iteration. Ops in a running
+loop skip the cache, since their keys depend on the iteration:
+
+```sh
+$ build/debug/tools/interpreter/interpreter examples/07-loops.mlir
+value   evaluated   cache    status
+%c0     0           —        completed
+%c1     1           —        completed
+%c3     3           —        completed
+%c4     4           —        completed
+%sum    6           miss     completed
+%next   unknown     miss     completed
+%prod   18          miss     completed
+%inner  unknown     miss     completed
+%ij     unknown     miss     completed
+%n      unknown     miss     completed
+```
+
+A loop outside any running loop is cached like any other op. It matches a loop
+over other SSA values with equal values and the same body structure:
+
+```sh
+$ build/debug/tools/interpreter/interpreter examples/08-equivalent-loops.mlir
+value   evaluated   cache    status
+%c0     0           —        completed
+%c1     1           —        completed
+%c2     2           —        completed
+%c4     4           —        completed
+%a      6           miss     completed
+%next   unknown     miss     completed
+%zero   0           miss     completed
+%four   4           miss     completed
+%b      6           hit      completed
+%t      unknown     miss     completed
+%c      0           miss     completed
+%u      unknown     miss     completed
+```
 
 The tool registers the `func`, `arith`, `cf`, `scf`, `index` and `ub` dialects.
 To support more, add them in `tools/interpreter/interpreter.cpp` and link the

@@ -4,6 +4,7 @@ target_link_libraries(interpreter PRIVATE
   Interpreter
   InterpreterArith
   InterpreterBuiltin
+  InterpreterSCF
   MLIRArithDialect
   MLIRAsmParser
   MLIRControlFlowDialect
