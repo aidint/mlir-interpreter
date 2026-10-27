@@ -1,6 +1,7 @@
 #include "interpreter/Dialects/Arith/ArithEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
+#include "interpreter/Dialects/SCF/SCFEval.h"
 #include "interpreter/Engine.h"
 
 #include "mlir/AsmParser/AsmParser.h"
@@ -202,6 +203,7 @@ int main(int argc, char **argv) {
               index::IndexDialect, scf::SCFDialect, ub::UBDialect>();
   registerArithEvalExternalModels(registry);
   registerBuiltinAttrEvalExternalModels(registry);
+  registerSCFEvalExternalModels(registry);
 
   std::string errorMessage;
   auto input = openInputFile(inputFilename, &errorMessage);

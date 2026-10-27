@@ -1,5 +1,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
+#include "interpreter/Dialects/SCF/SCFEval.h"
 #include "interpreter/Engine.h"
 #include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
@@ -146,6 +147,7 @@ DialectRegistry registry() {
   DialectRegistry result;
   result.insert<arith::ArithDialect>();
   registerBuiltinAttrEvalExternalModels(result);
+  registerSCFEvalExternalModels(result);
   return result;
 }
 
@@ -970,6 +972,71 @@ void testConstants() {
   CHECK(poison.conversions == 6);
 }
 
+/// Makes `op` answer its operand plus 1, or unknown when the operand is.
+void addOne(Operation *op) {
+  behaviors.at(op).evaluate = [](Operation *op, EvalScope &scope) {
+    Answer operand = scope.query(op->getOperand(0));
+    if (!operand.completed())
+      return operand.propagate(op);
+    if (operand.isUnknown())
+      return SmallVector<Answer>{operand};
+    const APInt &value = cast<IntEvalValue>(operand.getValue()).getValue();
+    return SmallVector<Answer>{
+        IntEvalValue::get(scope.getAllocator(), value + 1)};
+  };
+}
+
+void testLoopBodyReadsCache() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Operation *top = f.op(1, f.constant(1));
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  Operation *probe = f.op(1, zero);
+  for (Operation *op : {top, body, probe}) {
+    semanticKey(op);
+    addOne(op);
+  }
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(top->getResult(0), outcome), 2));
+  CHECK(outcome == CacheOutcome::Miss);
+
+  // Each iteration looks the body up under its own bindings. With the
+  // iteration argument at 1, its key matches `top`, so it hits.
+  Behavior &behavior = behaviors.at(body);
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behavior.eligibilityChecks == 3 && behavior.hashes == 3);
+  CHECK(behavior.evaluations == 2);
+
+  // The loop itself is cached.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behavior.evaluations == 2);
+
+  // The body's answer with the iteration argument at 0 wasn't stored, so an
+  // op outside the loop with the same key misses.
+  CHECK(isInteger(engine.query(probe->getResult(0), outcome), 1));
+  CHECK(outcome == CacheOutcome::Miss);
+
+  // Outside an iteration, the iteration argument is unknown, and the body is
+  // still looked up but not stored.
+  for (unsigned i = 0; i != 2; ++i) {
+    CHECK(engine.query(body->getResult(0), outcome).isUnknown());
+    CHECK(outcome == CacheOutcome::Miss);
+  }
+  CHECK(behavior.evaluations == 4);
+}
+
 }
 
 int main() {
@@ -1000,6 +1067,7 @@ int main() {
   testIdentityValueKeys();
   testSideEffectsOptOut();
   testConstants();
+  testLoopBodyReadsCache();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;

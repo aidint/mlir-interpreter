@@ -18,12 +18,38 @@ namespace mlir::interpreter {
 
 class Engine;
 
+/// This class represents the arguments of a block bound for one loop
+/// iteration. Destroying it unbinds them and drops the answers memoized in the
+/// iteration. It is empty, and binds nothing, when the budget ran out.
+class [[nodiscard]] BlockBinding {
+public:
+  BlockBinding(const BlockBinding &) = delete;
+  BlockBinding &operator=(const BlockBinding &) = delete;
+  ~BlockBinding();
+
+  explicit operator bool() const { return block; }
+
+private:
+  friend class EvalScope;
+
+  BlockBinding(Engine &engine, Block *block) : engine(engine), block(block) {}
+
+  Engine &engine;
+  Block *block;
+};
+
 /// The view an operation's evaluation gets of the engine that drives it.
 class EvalScope {
 public:
   explicit EvalScope(Engine &engine) : engine(engine) {}
 
   Answer query(Value value);
+  /// Binds `block`'s arguments to `args` until the returned binding is
+  /// destroyed. Bindings nest, and must be destroyed in reverse order. Each
+  /// binding costs a step, so a loop whose body costs nothing still ends. The
+  /// binding op must veto storing the ops that may depend on `args` through
+  /// `isNestedOpCacheable`.
+  BlockBinding bind(Block *block, ArrayRef<Answer> args);
   SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args);
   bool isOrdered() const;
   EvalValueStorageAllocator &getAllocator();

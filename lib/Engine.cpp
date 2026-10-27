@@ -10,7 +10,29 @@
 
 namespace mlir::interpreter {
 
+/// Returns whether `op`'s results may be stored in the cache: it is cacheable
+/// itself, and no evaluable ancestor vetoes it.
+static bool isUnequivocallyCacheable(Operation *op, bool cacheable) {
+  if (!cacheable)
+    return false;
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp())
+    if (auto evaluable = dyn_cast<EvaluableOpInterface>(parent))
+      if (!evaluable.isNestedOpCacheable(op))
+        return false;
+  return true;
+}
+
+BlockBinding::~BlockBinding() {
+  if (block)
+    engine.unbind(block);
+}
+
 Answer EvalScope::query(Value value) { return engine.queryNested(value); }
+
+BlockBinding EvalScope::bind(Block *block, ArrayRef<Answer> args) {
+  return BlockBinding(engine, engine.bind(block, args) ? block : nullptr);
+}
 
 SmallVector<Answer> EvalScope::walk(Region &region, ArrayRef<Answer> args) {
   return {};
@@ -41,6 +63,8 @@ Answer Engine::query(Value value, CacheOutcome &outcome) {
   if (answer.completed())
     if (const auto &value = answer.getValue())
       answer.value = answerAllocator.retain(value);
+  assert(frames.empty() && bindings.empty() &&
+         "every binding must end with the query");
   queryAllocator.reset();
   queryAnswers.clear();
   return answer;
@@ -51,19 +75,61 @@ Answer Engine::queryNested(Value value) {
   return evaluate(value);
 }
 
+bool Engine::bind(Block *block, ArrayRef<Answer> args) {
+  assert(args.size() == block->getNumArguments() &&
+         "binding requires one answer per block argument");
+  assert(llvm::none_of(
+             frames,
+             [&](const BindingFrame &frame) { return frame.block == block; }) &&
+         "a block cannot be bound twice at once");
+  if (remaining == 0)
+    return false;
+  --remaining;
+  frames.push_back({block, {}});
+  for (auto [arg, answer] : llvm::zip(block->getArguments(), args))
+    bindings.try_emplace(arg, answer);
+  return true;
+}
+
+void Engine::unbind(Block *block) {
+  assert(!frames.empty() && frames.back().block == block &&
+         "bindings must end in reverse order");
+  for (Value value : frames.back().memoized)
+    queryAnswers.erase(value);
+  for (BlockArgument arg : block->getArguments())
+    bindings.erase(arg);
+  frames.pop_back();
+}
+
 Answer Engine::evaluate(Value value) {
   if (auto it = queryAnswers.find(value); it != queryAnswers.end())
     return it->second;
   Answer answer = compute(value);
   if (answer.completed())
-    queryAnswers.try_emplace(value, answer);
+    memoize(value, answer);
   return answer;
+}
+
+void Engine::memoize(Value value, const Answer &answer) {
+  if (!queryAnswers.try_emplace(value, answer).second)
+    return;
+  // A loop's body can't use its results, so the frames that contain the
+  // definition were bound from outermost to innermost.
+  Region *region = value.getParentRegion();
+  auto frame = llvm::find_if(llvm::reverse(frames), [&](BindingFrame &frame) {
+    return frame.block->getParent()->isAncestor(region);
+  });
+  if (frame != frames.rend())
+    frame->memoized.push_back(value);
 }
 
 Answer Engine::compute(Value value, CacheOutcome *outcome) {
   auto result = dyn_cast<OpResult>(value);
-  if (!result)
-    return Answer::unknown();
+  if (!result) {
+    // A bound argument holds the current iteration's value, and costs no step.
+    auto it = bindings.find(cast<BlockArgument>(value));
+    return it != bindings.end() ? it->second : Answer::unknown();
+  }
 
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
@@ -88,6 +154,9 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   if (!eligible.completed())
     return eligible.status;
   bool cacheable = eligible.getValue();
+  // An op inside a loop is still looked up, keyed by the current bindings, but
+  // its answers aren't stored.
+  bool storable = isUnequivocallyCacheable(op, cacheable);
 
   std::optional<detail::CacheLookup> cached;
   if (cacheable) {
@@ -115,7 +184,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
   detail::CacheEntry *entry = nullptr;
-  if (cached && llvm::any_of(results, [](const Answer &result) {
+  if (cached && storable && llvm::any_of(results, [](const Answer &result) {
         return result.completed();
       })) {
     entry = cached->entry;
@@ -133,7 +202,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
       if (const auto &slot = entry->results[i])
         sibling = *slot;
     if (sibling.completed())
-      queryAnswers.try_emplace(op->getResult(i), sibling);
+      memoize(op->getResult(i), sibling);
   }
 
   if (entry)
