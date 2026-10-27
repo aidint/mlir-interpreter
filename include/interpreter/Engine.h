@@ -64,9 +64,6 @@ private:
   /// Unbinds the innermost frame, which must belong to `block`, and drops the
   /// answers memoized in it.
   void unbind(Block *block);
-  /// Returns whether `op` is nested in the region of a bound block, so its
-  /// operands may depend on the current bindings.
-  bool isInBoundRegion(Operation *op) const;
   /// Returns the answer for `value`, reusing one completed earlier in this
   /// query.
   Answer evaluate(Value value);

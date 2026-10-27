@@ -1,7 +1,8 @@
 // RUN: interpreter %s --split-input-file | FileCheck %s --match-full-lines
 
-// Nested loops. An op in a running loop skips the cache, so an inner loop is
-// evaluated again in each outer iteration, even when its operands are equal.
+// Nested loops. An op inside a loop is never stored, since its answer depends
+// on the iteration, so an inner loop is evaluated again in each outer
+// iteration, even when its operands are equal.
 
 // CHECK: value   evaluated   cache    status
 func.func @main() {

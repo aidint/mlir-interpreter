@@ -10,6 +10,19 @@
 
 namespace mlir::interpreter {
 
+/// Returns whether `op`'s results may be stored in the cache: it is cacheable
+/// itself, and no evaluable ancestor vetoes it.
+static bool isUnequivocallyCacheable(Operation *op, bool cacheable) {
+  if (!cacheable)
+    return false;
+  for (Operation *parent = op->getParentOp(); parent;
+       parent = parent->getParentOp())
+    if (auto evaluable = dyn_cast<EvaluableOpInterface>(parent))
+      if (!evaluable.isNestedOpCacheable(op))
+        return false;
+  return true;
+}
+
 BlockBinding::~BlockBinding() {
   if (block)
     engine.unbind(block);
@@ -88,12 +101,6 @@ void Engine::unbind(Block *block) {
   frames.pop_back();
 }
 
-bool Engine::isInBoundRegion(Operation *op) const {
-  return llvm::any_of(frames, [&](const BindingFrame &frame) {
-    return frame.block->getParent()->isAncestor(op->getParentRegion());
-  });
-}
-
 Answer Engine::evaluate(Value value) {
   if (auto it = queryAnswers.find(value); it != queryAnswers.end())
     return it->second;
@@ -141,17 +148,15 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
-  // An op in a bound region may depend on the current bindings, which cache
-  // keys can't tell apart across iterations, so it skips the cache.
-  bool cacheable = false;
-  if (!isInBoundRegion(op)) {
-    // Eligibility may query operands, so it runs inside the cycle guard and
-    // shares the query's budget and memo with hashing and evaluation.
-    auto eligible = evaluable.isCacheable(scope);
-    if (!eligible.completed())
-      return eligible.status;
-    cacheable = eligible.getValue();
-  }
+  // Eligibility may query operands, so it runs inside the cycle guard and
+  // shares the query's budget and memo with hashing and evaluation.
+  auto eligible = evaluable.isCacheable(scope);
+  if (!eligible.completed())
+    return eligible.status;
+  bool cacheable = eligible.getValue();
+  // An op inside a loop is still looked up, keyed by the current bindings, but
+  // its answers aren't stored.
+  bool storable = isUnequivocallyCacheable(op, cacheable);
 
   std::optional<detail::CacheLookup> cached;
   if (cacheable) {
@@ -179,7 +184,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
   detail::CacheEntry *entry = nullptr;
-  if (cached && llvm::any_of(results, [](const Answer &result) {
+  if (cached && storable && llvm::any_of(results, [](const Answer &result) {
         return result.completed();
       })) {
     entry = cached->entry;

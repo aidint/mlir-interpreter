@@ -182,8 +182,9 @@ either after the lookup (`miss`, as for `%s`) or during hashing (`—`, as for
 `%f`, whose operand `%s` was never cached).
 
 `scf.for` binds its induction variable and iteration arguments for each
-iteration, and nested loops iterate inside the outer iteration. Ops in a running
-loop skip the cache, since their keys depend on the iteration:
+iteration, and nested loops iterate inside the outer iteration. Ops inside a loop
+look up the cache with keys computed from the current iteration, but their
+answers aren't stored, since they depend on the iteration:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/07-loops.mlir
@@ -200,8 +201,8 @@ value   evaluated   cache    status
 %n      unknown     miss     completed
 ```
 
-A loop outside any running loop is cached like any other op. It matches a loop
-over other SSA values with equal values and the same body structure:
+A loop that isn't inside another loop is cached like any other op. It matches a
+loop over other SSA values with equal values and the same body structure:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/08-equivalent-loops.mlir

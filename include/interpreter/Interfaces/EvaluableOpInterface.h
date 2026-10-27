@@ -46,7 +46,9 @@ public:
   Answer query(Value value);
   /// Binds `block`'s arguments to `args` until the returned binding is
   /// destroyed. Bindings nest, and must be destroyed in reverse order. Each
-  /// binding costs a step, so a loop whose body costs nothing still ends.
+  /// binding costs a step, so a loop whose body costs nothing still ends. The
+  /// binding op must veto storing the ops that may depend on `args` through
+  /// `isNestedOpCacheable`.
   BlockBinding bind(Block *block, ArrayRef<Answer> args);
   SmallVector<Answer> walk(Region &region, ArrayRef<Answer> args);
   bool isOrdered() const;

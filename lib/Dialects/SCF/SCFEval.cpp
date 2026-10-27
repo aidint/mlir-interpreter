@@ -72,6 +72,12 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
     }
     return carried;
   }
+
+  /// Any nested op may depend on the induction variable or the iteration
+  /// arguments, so none is stored.
+  bool isNestedOpCacheable(Operation *op, Operation *nested) const {
+    return false;
+  }
 };
 
 } // namespace

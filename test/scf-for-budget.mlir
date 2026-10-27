@@ -27,5 +27,21 @@ func.func @main() {
     %n = arith.addi %acc, %i : index
     scf.yield %n : index
   }
+  // A nested op still looks up the cache, keyed by the current bindings. With
+  // %k = 0, %inner matches %sum, so it hits and %outer needs only 2 steps: 1
+  // for the loop and 1 for its binding. Evaluating %inner would take 9 more.
+  // CHECK-NEXT: %outer  6           miss     completed
+  // SHORT-NEXT: %outer  —           miss     exhausted
+  %outer = scf.for %k = %c0 to %c1 step %c1 iter_args(%acc = %c0) -> (index) {
+    // CHECK-NEXT: %inner  unknown     miss     completed
+    // SHORT-NEXT: %inner  unknown     miss     completed
+    %inner = scf.for %j = %c0 to %c4 step %c1 iter_args(%a = %k) -> (index) {
+      // CHECK-NEXT: %m      unknown     miss     completed
+      // SHORT-NEXT: %m      unknown     miss     completed
+      %m = arith.addi %a, %j : index
+      scf.yield %m : index
+    }
+    scf.yield %inner : index
+  }
   return
 }

@@ -48,6 +48,18 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
         return ::mlir::isMemoryEffectFree($_op.getOperation());
+      }]>,
+    InterfaceMethod<[{
+        Returns whether the results of `nested`, an operation in this
+        operation's regions, may be stored in the cache. Returns false when
+        `nested` may depend on values this operation binds, such as a loop's
+        induction variable. Lookups aren't affected: when no stored answer
+        depends on a binding, a key computed under the current bindings only
+        matches answers that hold for them.
+      }],
+      "bool", "isNestedOpCacheable", (ins "::mlir::Operation *":$nested), [{}],
+      /*defaultImplementation=*/[{
+        return true;
       }]>
   ];
 }
