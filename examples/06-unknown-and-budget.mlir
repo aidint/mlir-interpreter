@@ -21,10 +21,10 @@ func.func @main() {
   // CHECK-NEXT: %u      unknown     —        completed
   // NONE:       %u      unknown     —        completed
   %u = arith.divsi %c4, %c2 : i32
-  // An unknown left operand keys the sum by its operation...
+  // An unknown answer isn't stored...
   // CHECK-NEXT: %a      unknown     miss     completed
   %a = arith.addi %u, %c1 : i32
-  // ...so an identical sum gets its own entry.
+  // ...so an identical sum misses too.
   // CHECK-NEXT: %b      unknown     miss     completed
   %b = arith.addi %u, %c1 : i32
   // The constants are free, so the sum takes the only step. With no steps,

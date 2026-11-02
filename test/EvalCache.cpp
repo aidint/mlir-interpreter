@@ -330,12 +330,14 @@ void testPartialResultsAndLifetime() {
     CHECK(!exhausted.isUnknown());
     first = engine.query(op->getResult(0));
     CHECK(isInteger(*first, 5));
-    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(behaviors.at(op).evaluations == 1);
-    CHECK(isInteger(engine.query(op->getResult(2)), 13));
+    // The unknown wasn't stored, so evaluating again fills its slot too, and
+    // keeps the first answer.
+    CHECK(isInteger(engine.query(op->getResult(1)), 99));
     CHECK(behaviors.at(op).evaluations == 2);
+    CHECK(isInteger(engine.query(op->getResult(2)), 13));
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
-    CHECK(engine.query(op->getResult(1)).isUnknown());
+    CHECK(behaviors.at(op).evaluations == 2);
     CHECK(first->getValue().isCached());
     f.evalContext.clearCache();
     CHECK(isInteger(engine.query(op->getResult(0)), 99));
@@ -1023,13 +1025,13 @@ void testLoopBodyReadsCache() {
   CHECK(outcome == CacheOutcome::Hit);
   CHECK(behavior.evaluations == 2);
 
-  // The body's answer with the iteration argument at 0 wasn't stored, so an
-  // op outside the loop with the same key misses.
+  // The loop froze the cache, so the body's answer with the iteration argument
+  // at 0 wasn't stored, and an op outside the loop with the same key misses.
   CHECK(isInteger(engine.query(probe->getResult(0), outcome), 1));
   CHECK(outcome == CacheOutcome::Miss);
 
-  // Outside an iteration, the iteration argument is unknown, and the body is
-  // still looked up but not stored.
+  // Outside an iteration, the iteration argument is unknown, so is the body,
+  // and an unknown isn't stored.
   for (unsigned i = 0; i != 2; ++i) {
     CHECK(engine.query(body->getResult(0), outcome).isUnknown());
     CHECK(outcome == CacheOutcome::Miss);

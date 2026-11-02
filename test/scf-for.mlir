@@ -1,8 +1,8 @@
-// RUN: interpreter %s --split-input-file | FileCheck %s --match-full-lines
+// RUN: interpreter %s --split-input-file --allow-unregistered-dialect \
+// RUN:   | FileCheck %s --match-full-lines
 
-// Nested loops. An op inside a loop is never stored, since its answer depends
-// on the iteration, so an inner loop is evaluated again in each outer
-// iteration, even when its operands are equal.
+// Nested loops. A loop freezes the cache while it iterates, so an inner loop
+// is evaluated again in each outer iteration, even when its operands are equal.
 
 // CHECK: value   evaluated   cache    status
 func.func @main() {
@@ -38,6 +38,38 @@ func.func @main() {
     %next = arith.addi %acc, %row : index
     scf.yield %next : index
   }
+  return
+}
+
+// -----
+
+// A body op queried outside its loop answers unknown, which isn't stored, so a
+// later iteration can't hit it. "test.effect" makes %cap uncacheable, so %use
+// runs its loop again.
+
+// CHECK: value   evaluated   cache    status
+func.func @main() {
+  // CHECK-NEXT: %c0     0           —        completed
+  %c0 = arith.constant 0 : index
+  // CHECK-NEXT: %c1     1           —        completed
+  %c1 = arith.constant 1 : index
+  // CHECK-NEXT: %c4     4           —        completed
+  %c4 = arith.constant 4 : index
+  // CHECK-NEXT: %cap    24          —        completed
+  %cap = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %c0) -> (index) {
+    // CHECK-NEXT: %row    unknown     miss     completed
+    %row = scf.for %j = %c0 to %c4 step %c1 iter_args(%a = %c0) -> (index) {
+      // CHECK-NEXT: %m      unknown     miss     completed
+      %m = arith.addi %a, %i : index
+      scf.yield %m : index
+    }
+    // CHECK-NEXT: %next   unknown     miss     completed
+    %next = arith.addi %acc, %row : index
+    "test.effect"() : () -> ()
+    scf.yield %next : index
+  }
+  // CHECK-NEXT: %use    25          miss     completed
+  %use = arith.addi %cap, %c1 : index
   return
 }
 

@@ -67,6 +67,11 @@ SmallVector<Answer> forward(Operation *op, EvalScope &scope) {
   return SmallVector<Answer>(op->getNumResults(), answer);
 }
 
+/// Answers a new opaque value, which is known, so it is stored.
+SmallVector<Answer> opaque(Operation *, EvalScope &scope) {
+  return {OpaqueEvalValue::get(scope.getAllocator())};
+}
+
 /// This class represents a test model that keeps the default `getHash` and
 /// `isEquivalentTo`. Its evaluation and eligibility come from the op's
 /// `Behavior`.
@@ -318,6 +323,8 @@ void testUnknownFallback() {
   CHECK(equivalent(f, "a", "b"));
   CHECK(!equivalent(f, "a", "c"));
   CHECK(!equivalent(f, "a", "known"));
+  // Forwarding `%arg0` would answer unknown, which isn't stored.
+  f.behavior("a").evaluate = opaque;
   CHECK(f.query("a") == CacheOutcome::Miss);
   CHECK(f.query("b") == CacheOutcome::Hit);
   CHECK(f.query("c") == CacheOutcome::Miss);
@@ -344,9 +351,7 @@ void testIdentityValues() {
     }
   )mlir");
   for (StringRef name : {"o1", "o2"})
-    f.behavior(name).evaluate = [](Operation *, EvalScope &scope) {
-      return SmallVector<Answer>{OpaqueEvalValue::get(scope.getAllocator())};
-    };
+    f.behavior(name).evaluate = opaque;
   for (StringRef name : {"f1", "f2"})
     f.behavior(name).cacheable = false;
   // `f1` and `f2` forward the instance the cache retained for `o1`, while `o2`
@@ -469,6 +474,9 @@ void testRegions() {
   // their enclosing op's key.
   for (StringRef name : {"x1", "x2"})
     f.behavior(name).cacheable = false;
+  // Without operands, they would forward unknown, which isn't stored.
+  for (StringRef name : {"r1", "n1", "b1", "d1"})
+    f.behavior(name).evaluate = opaque;
 
   CHECK(equivalent(f, "r1", "r2"));
   CHECK(!equivalent(f, "r1", "capturedDiffers"));

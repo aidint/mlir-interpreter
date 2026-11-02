@@ -35,7 +35,7 @@ namespace detail {
 
 /// This class represents the cached answers of an operation and of the
 /// operations equivalent to it, with one slot per result. An empty slot has no
-/// completed answer yet and can be filled later.
+/// known answer yet and can be filled later.
 struct CacheEntry {
   Operation *op;
   MutableArrayRef<std::optional<Answer>> results;
@@ -55,16 +55,16 @@ struct CacheLookup {
   size_t searched;
 };
 
-/// This class represents the context cache: the answers operations completed,
-/// kept across queries. Each `EvalContext` owns one, shared by every `Engine`
-/// on that context, so an answer one query computes is reused by later queries
-/// and other engines, and cached values live as long as the context. Entries
-/// are bucketed by `getHash` and matched with `isEquivalentTo`, so equivalent
-/// operations share one entry. Only `Engine` fills it, inside a query, because
-/// filling copies values out of the query allocator and dedups them by
-/// address, which is only valid while that query runs. Constant-like ops skip
-/// the entries: their value depends only on their uniqued attribute and type,
-/// so those key a separate map.
+/// This class represents the context cache: the known answers operations
+/// computed, kept across queries. Each `EvalContext` owns one, shared by every
+/// `Engine` on that context, so an answer one query computes is reused by later
+/// queries and other engines, and cached values live as long as the context.
+/// Entries are bucketed by `getHash` and matched with `isEquivalentTo`, so
+/// equivalent operations share one entry. Only `Engine` fills it, inside a
+/// query, because filling copies values out of the query allocator and dedups
+/// them by address, which is only valid while that query runs. Constant-like
+/// ops skip the entries: their value depends only on their uniqued attribute
+/// and type, so those key a separate map.
 class EvalCache {
 public:
   void clear() {

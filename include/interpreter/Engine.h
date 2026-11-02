@@ -45,6 +45,7 @@ public:
 
 private:
   friend class BlockBinding;
+  friend class CacheFreeze;
   friend class EvalScope;
 
   /// This class represents the arguments of one block, bound for one loop
@@ -92,6 +93,8 @@ private:
   /// The blocks bound in the current query, most recent last.
   SmallVector<BindingFrame> frames;
   DenseMap<BlockArgument, Answer> bindings;
+  /// The number of live cache freezes. Answers are stored only when it is 0.
+  unsigned freezes = 0;
 };
 
 StringRef stringifyEvalStatus(EvalStatus status);

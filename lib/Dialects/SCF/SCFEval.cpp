@@ -50,6 +50,10 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
     // A step that isn't strictly positive is undefined.
     if (isUnsigned ? step.isZero() : !step.isStrictlyPositive())
       return unknown;
+    // Answers computed in an iteration can depend on its bindings, which cache
+    // keys don't include, and each iteration would add entries, so nothing is
+    // stored until the loop ends.
+    CacheFreeze freeze = scope.freezeCache();
     for (APInt iv = control[0]; isUnsigned ? iv.ult(ub) : iv.slt(ub);) {
       SmallVector<Answer> args{IntEvalValue::get(scope.getAllocator(), iv)};
       llvm::append_range(args, carried);
@@ -71,12 +75,6 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
         return unknown;
     }
     return carried;
-  }
-
-  /// Any nested op may depend on the induction variable or the iteration
-  /// arguments, so none is stored.
-  bool isNestedOpCacheable(Operation *op, Operation *nested) const {
-    return false;
   }
 };
 

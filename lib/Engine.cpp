@@ -10,25 +10,18 @@
 
 namespace mlir::interpreter {
 
-/// Returns whether `op`'s results may be stored in the cache: it is cacheable
-/// itself, and no evaluable ancestor vetoes it.
-static bool isUnequivocallyCacheable(Operation *op, bool cacheable) {
-  if (!cacheable)
-    return false;
-  for (Operation *parent = op->getParentOp(); parent;
-       parent = parent->getParentOp())
-    if (auto evaluable = dyn_cast<EvaluableOpInterface>(parent))
-      if (!evaluable.isNestedOpCacheable(op))
-        return false;
-  return true;
-}
-
 BlockBinding::~BlockBinding() {
   if (block)
     engine.unbind(block);
 }
 
+CacheFreeze::CacheFreeze(Engine &engine) : engine(engine) { ++engine.freezes; }
+
+CacheFreeze::~CacheFreeze() { --engine.freezes; }
+
 Answer EvalScope::query(Value value) { return engine.queryNested(value); }
+
+CacheFreeze EvalScope::freezeCache() { return CacheFreeze(engine); }
 
 BlockBinding EvalScope::bind(Block *block, ArrayRef<Answer> args) {
   return BlockBinding(engine, engine.bind(block, args) ? block : nullptr);
@@ -63,8 +56,8 @@ Answer Engine::query(Value value, CacheOutcome &outcome) {
   if (answer.completed())
     if (const auto &value = answer.getValue())
       answer.value = answerAllocator.retain(value);
-  assert(frames.empty() && bindings.empty() &&
-         "every binding must end with the query");
+  assert(frames.empty() && bindings.empty() && !freezes &&
+         "every binding and freeze must end with the query");
   queryAllocator.reset();
   queryAnswers.clear();
   return answer;
@@ -82,6 +75,9 @@ bool Engine::bind(Block *block, ArrayRef<Answer> args) {
              frames,
              [&](const BindingFrame &frame) { return frame.block == block; }) &&
          "a block cannot be bound twice at once");
+  // Cache keys don't include the values an op's regions capture, so an answer
+  // computed under a binding must not be stored.
+  assert(freezes && "the cache must be frozen while a block is bound");
   if (remaining == 0)
     return false;
   --remaining;
@@ -154,9 +150,6 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   if (!eligible.completed())
     return eligible.status;
   bool cacheable = eligible.getValue();
-  // An op inside a loop is still looked up, keyed by the current bindings, but
-  // its answers aren't stored.
-  bool storable = isUnequivocallyCacheable(op, cacheable);
 
   std::optional<detail::CacheLookup> cached;
   if (cacheable) {
@@ -184,8 +177,9 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
   detail::CacheEntry *entry = nullptr;
-  if (cached && storable && llvm::any_of(results, [](const Answer &result) {
-        return result.completed();
+  // A frozen cache is still looked up above, but nothing is stored.
+  if (cached && !freezes && llvm::any_of(results, [](const Answer &result) {
+        return result.completed() && !result.isUnknown();
       })) {
     entry = cached->entry;
     if (entry)
