@@ -1002,8 +1002,7 @@ void testLoopBodyReadsCache() {
     body = f.op(1, loop.getRegionIterArgs()[0]);
     scf::YieldOp::create(f.builder, loc, body->getResult(0));
   }
-  Operation *probe = f.op(1, zero);
-  for (Operation *op : {top, body, probe}) {
+  for (Operation *op : {top, body}) {
     semanticKey(op);
     addOne(op);
   }
@@ -1025,11 +1024,6 @@ void testLoopBodyReadsCache() {
   CHECK(outcome == CacheOutcome::Hit);
   CHECK(behavior.evaluations == 2);
 
-  // The loop froze the cache, so the body's answer with the iteration argument
-  // at 0 wasn't stored, and an op outside the loop with the same key misses.
-  CHECK(isInteger(engine.query(probe->getResult(0), outcome), 1));
-  CHECK(outcome == CacheOutcome::Miss);
-
   // Outside an iteration, the iteration argument is unknown, so is the body,
   // and an unknown isn't stored.
   for (unsigned i = 0; i != 2; ++i) {
@@ -1037,6 +1031,38 @@ void testLoopBodyReadsCache() {
     CHECK(outcome == CacheOutcome::Miss);
   }
   CHECK(behavior.evaluations == 4);
+}
+
+void testLoopFreezesCache() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Value memory = memref::AllocaOp::create(
+      f.builder, loc, MemRefType::get({}, f.builder.getI32Type()));
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    // The load makes the loop uncacheable, so every query runs it.
+    memref::LoadOp::create(f.builder, loc, memory, ValueRange());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  semanticKey(body);
+  addOne(body);
+
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+  Behavior &behavior = behaviors.at(body);
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::None);
+  CHECK(behavior.evaluations == 3);
+
+  // The first run stored nothing, so the second finds no entry for the body.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(behavior.evaluations == 6);
 }
 
 }
@@ -1070,6 +1096,7 @@ int main() {
   testSideEffectsOptOut();
   testConstants();
   testLoopBodyReadsCache();
+  testLoopFreezesCache();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
