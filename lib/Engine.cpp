@@ -10,10 +10,7 @@
 
 namespace mlir::interpreter {
 
-BlockBinding::~BlockBinding() {
-  if (block)
-    engine.unbind(block);
-}
+BlockBinding::~BlockBinding() { engine.unbind(block); }
 
 CacheFreeze::CacheFreeze(Engine &engine) : engine(engine) { ++engine.freezes; }
 
@@ -23,8 +20,16 @@ Answer EvalScope::query(Value value) { return engine.queryNested(value); }
 
 CacheFreeze EvalScope::freezeCache() { return CacheFreeze(engine); }
 
+bool EvalScope::declareCost() {
+  if (engine.remaining == 0)
+    return false;
+  --engine.remaining;
+  return true;
+}
+
 BlockBinding EvalScope::bind(Block *block, ArrayRef<Answer> args) {
-  return BlockBinding(engine, engine.bind(block, args) ? block : nullptr);
+  engine.bind(block, args);
+  return BlockBinding(engine, block);
 }
 
 SmallVector<Answer> EvalScope::walk(Region &region, ArrayRef<Answer> args) {
@@ -68,20 +73,16 @@ Answer Engine::queryNested(Value value) {
   return evaluate(value);
 }
 
-bool Engine::bind(Block *block, ArrayRef<Answer> args) {
+void Engine::bind(Block *block, ArrayRef<Answer> args) {
   assert(args.size() == block->getNumArguments() &&
          "binding requires one answer per block argument");
   assert(llvm::none_of(
              frames,
              [&](const BindingFrame &frame) { return frame.block == block; }) &&
          "a block cannot be bound twice at once");
-  if (remaining == 0)
-    return false;
-  --remaining;
   frames.push_back({block, {}});
   for (auto [arg, answer] : llvm::zip(block->getArguments(), args))
     bindings.try_emplace(arg, answer);
-  return true;
 }
 
 void Engine::unbind(Block *block) {
@@ -165,9 +166,8 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   }
 
   // The step is charged before `evaluate` queries the operands it needs.
-  if (remaining == 0)
+  if (!scope.declareCost())
     return EvalStatus::Exhausted;
-  --remaining;
 
   SmallVector<Answer> results = evaluable.evaluate(scope);
 

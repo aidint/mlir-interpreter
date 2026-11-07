@@ -59,9 +59,8 @@ private:
 
   EvalValueStorageAllocator &getQueryAllocator() { return *queryAllocator; }
   Answer queryNested(Value value);
-  /// Binds `block`'s arguments to `args` for one iteration, or returns false
-  /// when the budget ran out.
-  bool bind(Block *block, ArrayRef<Answer> args);
+  /// Binds `block`'s arguments to `args` for one iteration.
+  void bind(Block *block, ArrayRef<Answer> args);
   /// Unbinds the innermost frame, which must belong to `block`, and drops the
   /// answers memoized in it.
   void unbind(Block *block);

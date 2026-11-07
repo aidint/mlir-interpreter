@@ -1,9 +1,9 @@
 // RUN: interpreter --budget=9 %s | FileCheck %s --match-full-lines
 // RUN: interpreter --budget=8 %s | FileCheck %s --match-full-lines --check-prefix=SHORT
 
-// The loop costs a step, and each of its 4 iterations costs one for its
-// binding and one for the addition, so it needs 9 steps. A loop that runs out
-// is retried by the next query, since signals aren't cached.
+// The loop costs a step, and each of its 4 iterations costs one for itself
+// and one for the addition, so it needs 9 steps. A loop that runs out is
+// retried by the next query, since signals aren't cached.
 
 // CHECK: value   evaluated   cache    status
 // SHORT: value   evaluated   cache    status

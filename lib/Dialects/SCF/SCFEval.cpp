@@ -55,12 +55,14 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
     // stored until the loop ends.
     CacheFreeze freeze = scope.freezeCache();
     for (APInt iv = control[0]; isUnsigned ? iv.ult(ub) : iv.slt(ub);) {
+      // Each iteration costs a step, so a loop whose body costs nothing still
+      // ends.
+      if (!scope.declareCost())
+        return Answer(EvalStatus::Exhausted).propagate(op);
       SmallVector<Answer> args{IntEvalValue::get(scope.getAllocator(), iv)};
       llvm::append_range(args, carried);
       // The binding lasts until the end of this iteration.
       BlockBinding binding = scope.bind(forOp.getBody(), args);
-      if (!binding)
-        return Answer(EvalStatus::Exhausted).propagate(op);
       for (auto [slot, operand] :
            llvm::zip(carried, forOp.getYieldedValues())) {
         slot = scope.query(operand);
