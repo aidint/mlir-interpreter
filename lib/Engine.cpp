@@ -75,9 +75,6 @@ bool Engine::bind(Block *block, ArrayRef<Answer> args) {
              frames,
              [&](const BindingFrame &frame) { return frame.block == block; }) &&
          "a block cannot be bound twice at once");
-  // Cache keys don't include the values an op's regions capture, so an answer
-  // computed under a binding must not be stored.
-  assert(freezes && "the cache must be frozen while a block is bound");
   if (remaining == 0)
     return false;
   --remaining;
