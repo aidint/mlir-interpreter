@@ -63,6 +63,10 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
       llvm::append_range(args, carried);
       // The binding lasts until the end of this iteration.
       BlockBinding binding = scope.bind(forOp.getBody(), args);
+      // TODO: Only the yields' backward slice runs, in demand order, which is
+      // wrong for a body with side effects: a store no yield depends on never
+      // runs. Walk such a body in program order instead, and keep this as the
+      // path for bodies without side effects (MLIR-26).
       for (auto [slot, operand] :
            llvm::zip(carried, forOp.getYieldedValues())) {
         slot = scope.query(operand);
