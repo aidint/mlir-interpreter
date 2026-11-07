@@ -71,12 +71,11 @@ void EvalCache::fill(CacheEntry *entry, ArrayRef<Answer> answers) {
   for (auto [slot, answer] : llvm::zip(entry->results, answers)) {
     assert((answer.completed() || !answer.value) &&
            "incomplete evaluations cannot have a value");
-    if (slot || !answer.completed())
+    // An unknown answer may only mean that a block argument wasn't bound, and
+    // binding it doesn't change the key, so only known answers are stored.
+    if (slot || !answer.completed() || answer.isUnknown())
       continue;
-    Answer retained = answer;
-    if (const auto &value = answer.getValue())
-      retained.value = allocator.retain(value);
-    slot = retained;
+    slot = allocator.retain(answer.getValue());
   }
 }
 

@@ -10,7 +10,27 @@
 
 namespace mlir::interpreter {
 
+BlockBinding::~BlockBinding() { engine.unbind(block); }
+
+CacheFreeze::CacheFreeze(Engine &engine) : engine(engine) { ++engine.freezes; }
+
+CacheFreeze::~CacheFreeze() { --engine.freezes; }
+
 Answer EvalScope::query(Value value) { return engine.queryNested(value); }
+
+CacheFreeze EvalScope::freezeCache() { return CacheFreeze(engine); }
+
+bool EvalScope::declareCost() {
+  if (engine.remaining == 0)
+    return false;
+  --engine.remaining;
+  return true;
+}
+
+BlockBinding EvalScope::bind(Block *block, ArrayRef<Answer> args) {
+  engine.bind(block, args);
+  return BlockBinding(engine, block);
+}
 
 SmallVector<Answer> EvalScope::walk(Region &region, ArrayRef<Answer> args) {
   return {};
@@ -41,6 +61,8 @@ Answer Engine::query(Value value, CacheOutcome &outcome) {
   if (answer.completed())
     if (const auto &value = answer.getValue())
       answer.value = answerAllocator.retain(value);
+  assert(frames.empty() && bindings.empty() && !freezes &&
+         "every binding and freeze must end with the query");
   queryAllocator.reset();
   queryAnswers.clear();
   return answer;
@@ -51,19 +73,57 @@ Answer Engine::queryNested(Value value) {
   return evaluate(value);
 }
 
+void Engine::bind(Block *block, ArrayRef<Answer> args) {
+  assert(args.size() == block->getNumArguments() &&
+         "binding requires one answer per block argument");
+  assert(llvm::none_of(
+             frames,
+             [&](const BindingFrame &frame) { return frame.block == block; }) &&
+         "a block cannot be bound twice at once");
+  frames.push_back({block, {}});
+  for (auto [arg, answer] : llvm::zip(block->getArguments(), args))
+    bindings.try_emplace(arg, answer);
+}
+
+void Engine::unbind(Block *block) {
+  assert(!frames.empty() && frames.back().block == block &&
+         "bindings must end in reverse order");
+  for (Value value : frames.back().memoized)
+    queryAnswers.erase(value);
+  for (BlockArgument arg : block->getArguments())
+    bindings.erase(arg);
+  frames.pop_back();
+}
+
 Answer Engine::evaluate(Value value) {
   if (auto it = queryAnswers.find(value); it != queryAnswers.end())
     return it->second;
   Answer answer = compute(value);
   if (answer.completed())
-    queryAnswers.try_emplace(value, answer);
+    memoize(value, answer);
   return answer;
+}
+
+void Engine::memoize(Value value, const Answer &answer) {
+  if (!queryAnswers.try_emplace(value, answer).second)
+    return;
+  // A loop's body can't use its results, so the frames that contain the
+  // definition were bound from outermost to innermost.
+  Region *region = value.getParentRegion();
+  auto frame = llvm::find_if(llvm::reverse(frames), [&](BindingFrame &frame) {
+    return frame.block->getParent()->isAncestor(region);
+  });
+  if (frame != frames.rend())
+    frame->memoized.push_back(value);
 }
 
 Answer Engine::compute(Value value, CacheOutcome *outcome) {
   auto result = dyn_cast<OpResult>(value);
-  if (!result)
-    return Answer::unknown();
+  if (!result) {
+    // A bound argument holds the current iteration's value, and costs no step.
+    auto it = bindings.find(cast<BlockArgument>(value));
+    return it != bindings.end() ? it->second : Answer::unknown();
+  }
 
   Operation *op = result.getOwner();
   auto evaluable = dyn_cast<EvaluableOpInterface>(op);
@@ -106,17 +166,17 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   }
 
   // The step is charged before `evaluate` queries the operands it needs.
-  if (remaining == 0)
+  if (!scope.declareCost())
     return EvalStatus::Exhausted;
-  --remaining;
 
   SmallVector<Answer> results = evaluable.evaluate(scope);
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
   detail::CacheEntry *entry = nullptr;
-  if (cached && llvm::any_of(results, [](const Answer &result) {
-        return result.completed();
+  // A frozen cache is still looked up above, but nothing is stored.
+  if (cached && !freezes && llvm::any_of(results, [](const Answer &result) {
+        return result.completed() && !result.isUnknown();
       })) {
     entry = cached->entry;
     if (entry)
@@ -133,7 +193,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
       if (const auto &slot = entry->results[i])
         sibling = *slot;
     if (sibling.completed())
-      queryAnswers.try_emplace(op->getResult(i), sibling);
+      memoize(op->getResult(i), sibling);
   }
 
   if (entry)

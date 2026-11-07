@@ -1,5 +1,6 @@
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
+#include "interpreter/Dialects/SCF/SCFEval.h"
 #include "interpreter/Engine.h"
 #include "interpreter/Interfaces/EvaluableAttrInterface.h"
 
@@ -146,6 +147,7 @@ DialectRegistry registry() {
   DialectRegistry result;
   result.insert<arith::ArithDialect>();
   registerBuiltinAttrEvalExternalModels(result);
+  registerSCFEvalExternalModels(result);
   return result;
 }
 
@@ -328,12 +330,14 @@ void testPartialResultsAndLifetime() {
     CHECK(!exhausted.isUnknown());
     first = engine.query(op->getResult(0));
     CHECK(isInteger(*first, 5));
-    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(behaviors.at(op).evaluations == 1);
-    CHECK(isInteger(engine.query(op->getResult(2)), 13));
+    // The unknown wasn't stored, so evaluating again fills its slot too, and
+    // keeps the first answer.
+    CHECK(isInteger(engine.query(op->getResult(1)), 99));
     CHECK(behaviors.at(op).evaluations == 2);
+    CHECK(isInteger(engine.query(op->getResult(2)), 13));
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
-    CHECK(engine.query(op->getResult(1)).isUnknown());
+    CHECK(behaviors.at(op).evaluations == 2);
     CHECK(first->getValue().isCached());
     f.evalContext.clearCache();
     CHECK(isInteger(engine.query(op->getResult(0)), 99));
@@ -970,6 +974,97 @@ void testConstants() {
   CHECK(poison.conversions == 6);
 }
 
+/// Makes `op` answer its operand plus 1, or unknown when the operand is.
+void addOne(Operation *op) {
+  behaviors.at(op).evaluate = [](Operation *op, EvalScope &scope) {
+    Answer operand = scope.query(op->getOperand(0));
+    if (!operand.completed())
+      return operand.propagate(op);
+    if (operand.isUnknown())
+      return SmallVector<Answer>{operand};
+    const APInt &value = cast<IntEvalValue>(operand.getValue()).getValue();
+    return SmallVector<Answer>{
+        IntEvalValue::get(scope.getAllocator(), value + 1)};
+  };
+}
+
+void testLoopBodyReadsCache() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Operation *top = f.op(1, f.constant(1));
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  for (Operation *op : {top, body}) {
+    semanticKey(op);
+    addOne(op);
+  }
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(top->getResult(0), outcome), 2));
+  CHECK(outcome == CacheOutcome::Miss);
+
+  // Each iteration looks the body up under its own bindings. With the
+  // iteration argument at 1, its key matches `top`, so it hits.
+  Behavior &behavior = behaviors.at(body);
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behavior.eligibilityChecks == 3 && behavior.hashes == 3);
+  CHECK(behavior.evaluations == 2);
+
+  // The loop itself is cached.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behavior.evaluations == 2);
+
+  // Outside an iteration, the iteration argument is unknown, so is the body,
+  // and an unknown isn't stored.
+  for (unsigned i = 0; i != 2; ++i) {
+    CHECK(engine.query(body->getResult(0), outcome).isUnknown());
+    CHECK(outcome == CacheOutcome::Miss);
+  }
+  CHECK(behavior.evaluations == 4);
+}
+
+void testLoopFreezesCache() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Value memory = memref::AllocaOp::create(
+      f.builder, loc, MemRefType::get({}, f.builder.getI32Type()));
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    // The load makes the loop uncacheable, so every query runs it.
+    memref::LoadOp::create(f.builder, loc, memory, ValueRange());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  semanticKey(body);
+  addOne(body);
+
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+  Behavior &behavior = behaviors.at(body);
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(outcome == CacheOutcome::None);
+  CHECK(behavior.evaluations == 3);
+
+  // The first run stored nothing, so the second finds no entry for the body.
+  CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
+  CHECK(behavior.evaluations == 6);
+}
+
 }
 
 int main() {
@@ -1000,6 +1095,8 @@ int main() {
   testIdentityValueKeys();
   testSideEffectsOptOut();
   testConstants();
+  testLoopBodyReadsCache();
+  testLoopFreezesCache();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
