@@ -4,6 +4,7 @@
 .env*
 CLAUDE.md
 AGENTS.md
+/.claude/
 specs
 .clangd
 /tablegen_compile_commands.yml
