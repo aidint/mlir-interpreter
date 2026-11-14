@@ -1,6 +1,9 @@
 #ifndef INTERPRETER_EVALCACHEKEY_H
 #define INTERPRETER_EVALCACHEKEY_H
 
+#include "interpreter/EvalResult.h"
+#include "interpreter/EvalValue.h"
+
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Types.h"
@@ -21,6 +24,10 @@ class Block;
 class Operation;
 class Region;
 } // namespace mlir
+
+namespace mlir::interpreter {
+class EvalScope;
+} // namespace mlir::interpreter
 
 namespace mlir::interpreter::detail {
 
@@ -115,10 +122,6 @@ private:
   ArrayRef<OperandRef> snapshotOperands(OperandRange operands);
   void number(ValueRange values);
 
-  /// Allocates one element per element of `range`, built by `fn` in order.
-  template <typename T, typename RangeT, typename FnT>
-  ArrayRef<T> map(RangeT &&range, FnT fn);
-
   llvm::BumpPtrAllocator &allocator;
   /// The number of each value defined in the snapshot so far.
   DenseMap<Value, unsigned> inner;
@@ -129,6 +132,46 @@ private:
   SmallVector<Value> outerValues;
 };
 
+/// This class represents the key of a cache entry: the snapshot of an
+/// operation, and the type and answer of each of its input slots. An unknown
+/// answer is a null input, which matches only another null input.
+struct CacheKey {
+  const EvalCacheOp *op;
+  ArrayRef<Type> inputTypes;
+  ArrayRef<EvalValue> inputs;
+};
+
+/// Builds the key of `op` in `scratch`, querying each outer value in slot
+/// order. The first signal stops the queries and is returned. The key borrows
+/// the live ops' properties and the query's values, so it is only valid while
+/// both are.
+EvalResult<CacheKey> buildCacheKey(Operation *op, EvalScope &scope,
+                                   llvm::BumpPtrAllocator &scratch);
+
+/// Returns a copy of `key` that owns its data: its arrays and properties are
+/// copied into `allocator`, and its inputs are retained by `values`. Only valid
+/// inside a query, as `retain` is. The copy must be destroyed with
+/// `destroyCacheKey`.
+CacheKey copyCacheKey(const CacheKey &key, llvm::BumpPtrAllocator &allocator,
+                      EvalValueStorageAllocator &values);
+
+/// Destroys the properties a copied key owns. Its memory stays with the
+/// allocator it was copied into. The key's `MLIRContext` must still be alive.
+void destroyCacheKey(const CacheKey &key);
+
 } // namespace mlir::interpreter::detail
+
+namespace llvm {
+
+/// Hashes and compares cache keys by content, so keys built for different ops
+/// match when their structure and input answers do.
+template <> struct DenseMapInfo<mlir::interpreter::detail::CacheKey> {
+  using CacheKey = mlir::interpreter::detail::CacheKey;
+
+  static unsigned getHashValue(const CacheKey &key);
+  static bool isEqual(const CacheKey &lhs, const CacheKey &rhs);
+};
+
+} // namespace llvm
 
 #endif

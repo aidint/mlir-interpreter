@@ -1,14 +1,98 @@
 #include "interpreter/EvalCacheKey.h"
+#include "interpreter/Answer.h"
+#include "interpreter/Interfaces/EvaluableOpInterface.h"
 
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Region.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Alignment.h"
 
 #include <iterator>
 
 namespace mlir::interpreter::detail {
+namespace {
+
+/// Allocates one element per element of `range` in `allocator`, built by `fn`
+/// in order.
+template <typename T, typename RangeT, typename FnT>
+ArrayRef<T> allocateArray(llvm::BumpPtrAllocator &allocator, RangeT &&range,
+                          FnT fn) {
+  size_t size = std::distance(std::begin(range), std::end(range));
+  if (size == 0)
+    return {};
+  T *data = allocator.Allocate<T>(size);
+  T *next = data;
+  for (auto &&element : range)
+    new (next++) T(fn(element));
+  return {data, size};
+}
+
+template <typename T>
+ArrayRef<T> copyArray(llvm::BumpPtrAllocator &allocator, ArrayRef<T> array) {
+  return allocateArray<T>(allocator, array,
+                          [](const T &element) { return element; });
+}
+
+EvalCacheOp copyOp(const EvalCacheOp &op, llvm::BumpPtrAllocator &allocator);
+
+EvalCacheBlock copyBlock(const EvalCacheBlock &block,
+                         llvm::BumpPtrAllocator &allocator) {
+  ArrayRef<EvalCacheOp> ops = allocateArray<EvalCacheOp>(
+      allocator, block.ops,
+      [&](const EvalCacheOp &op) { return copyOp(op, allocator); });
+  return {copyArray(allocator, block.argTypes), ops};
+}
+
+EvalCacheRegion copyRegion(const EvalCacheRegion &region,
+                           llvm::BumpPtrAllocator &allocator) {
+  return {allocateArray<EvalCacheBlock>(allocator, region.blocks,
+                                        [&](const EvalCacheBlock &block) {
+                                          return copyBlock(block, allocator);
+                                        })};
+}
+
+EvalCacheOp copyOp(const EvalCacheOp &op, llvm::BumpPtrAllocator &allocator) {
+  PropertyRef properties;
+  if (op.properties) {
+    // Properties are aligned to 8 bytes, as in `Operation`.
+    void *storage =
+        allocator.Allocate(op.name.getOpPropertyByteSize(), llvm::Align(8));
+    properties = PropertyRef(op.properties.getTypeID(), storage);
+    op.name.initOpProperties(properties, op.properties);
+  }
+  ArrayRef<EvalCacheRegion> regions = allocateArray<EvalCacheRegion>(
+      allocator, op.regions, [&](const EvalCacheRegion &region) {
+        return copyRegion(region, allocator);
+      });
+  return {op.name,
+          op.attrs,
+          properties,
+          copyArray(allocator, op.resultTypes),
+          copyArray(allocator, op.operands),
+          copyArray(allocator, op.successors),
+          regions};
+}
+
+void destroyOp(const EvalCacheOp &op) {
+  if (op.properties)
+    op.name.destroyOpProperties(op.properties);
+  for (const EvalCacheRegion &region : op.regions)
+    for (const EvalCacheBlock &block : region.blocks)
+      for (const EvalCacheOp &nested : block.ops)
+        destroyOp(nested);
+}
+
+/// Returns whether two inputs are equal. Unknown matches only unknown, and
+/// `EvalValue::isEqual` can't take a null value.
+bool isInputEqual(EvalValue lhs, EvalValue rhs) {
+  if (!lhs || !rhs)
+    return !lhs && !rhs;
+  return lhs.isEqual(rhs);
+}
+
+} // namespace
 
 bool operator==(const EvalCacheOp &lhs, const EvalCacheOp &rhs) {
   // Properties are only comparable once the names, which give their layout,
@@ -41,18 +125,6 @@ llvm::hash_code hash_value(const EvalCacheRegion &region) {
   return hash_value(region.blocks);
 }
 
-template <typename T, typename RangeT, typename FnT>
-ArrayRef<T> CacheKeyBuilder::map(RangeT &&range, FnT fn) {
-  size_t size = std::distance(std::begin(range), std::end(range));
-  if (size == 0)
-    return {};
-  T *data = allocator.Allocate<T>(size);
-  T *next = data;
-  for (auto &&element : range)
-    new (next++) T(fn(element));
-  return {data, size};
-}
-
 const EvalCacheOp *CacheKeyBuilder::build(Operation *root) {
   assert(root->getNumSuccessors() == 0 &&
          "a root's successors are outside its snapshot");
@@ -78,13 +150,16 @@ const EvalCacheOp *CacheKeyBuilder::build(Operation *root) {
 EvalCacheOp CacheKeyBuilder::snapshotOp(Operation &op) {
   // The fields are built in walk order: results, operands, then regions.
   number(op.getResults());
-  ArrayRef<Type> resultTypes =
-      map<Type>(op.getResultTypes(), [](Type type) { return type; });
+  ArrayRef<Type> resultTypes = allocateArray<Type>(
+      allocator, op.getResultTypes(), [](Type type) { return type; });
   ArrayRef<OperandRef> operands = snapshotOperands(op.getOperands());
-  ArrayRef<unsigned> successors = map<unsigned>(
-      op.getSuccessors(), [&](Block *block) { return blockIndices.at(block); });
-  ArrayRef<EvalCacheRegion> regions = map<EvalCacheRegion>(
-      op.getRegions(), [&](Region &region) { return snapshotRegion(region); });
+  ArrayRef<unsigned> successors =
+      allocateArray<unsigned>(allocator, op.getSuccessors(), [&](Block *block) {
+        return blockIndices.at(block);
+      });
+  ArrayRef<EvalCacheRegion> regions = allocateArray<EvalCacheRegion>(
+      allocator, op.getRegions(),
+      [&](Region &region) { return snapshotRegion(region); });
   return {op.getName(),
           op.getRawDictionaryAttrs(),
           op.getPropertiesStorage(),
@@ -99,16 +174,16 @@ EvalCacheRegion CacheKeyBuilder::snapshotRegion(Region &region) {
   // before any is visited.
   for (auto [index, block] : llvm::enumerate(region))
     blockIndices.try_emplace(&block, index);
-  return {map<EvalCacheBlock>(
-      region, [&](Block &block) { return snapshotBlock(block); })};
+  return {allocateArray<EvalCacheBlock>(
+      allocator, region, [&](Block &block) { return snapshotBlock(block); })};
 }
 
 EvalCacheBlock CacheKeyBuilder::snapshotBlock(Block &block) {
   number(block.getArguments());
-  ArrayRef<Type> argTypes =
-      map<Type>(block.getArgumentTypes(), [](Type type) { return type; });
-  ArrayRef<EvalCacheOp> ops =
-      map<EvalCacheOp>(block, [&](Operation &op) { return snapshotOp(op); });
+  ArrayRef<Type> argTypes = allocateArray<Type>(
+      allocator, block.getArgumentTypes(), [](Type type) { return type; });
+  ArrayRef<EvalCacheOp> ops = allocateArray<EvalCacheOp>(
+      allocator, block, [&](Operation &op) { return snapshotOp(op); });
   return {argTypes, ops};
 }
 
@@ -133,4 +208,52 @@ void CacheKeyBuilder::number(ValueRange values) {
     inner.try_emplace(value, inner.size());
 }
 
+EvalResult<CacheKey> buildCacheKey(Operation *op, EvalScope &scope,
+                                   llvm::BumpPtrAllocator &scratch) {
+  CacheKeyBuilder builder(scratch);
+  const EvalCacheOp *snapshot = builder.build(op);
+  ArrayRef<Value> outerValues = builder.getOuterValues();
+  ArrayRef<Type> inputTypes = allocateArray<Type>(
+      scratch, outerValues, [](Value value) { return value.getType(); });
+  auto *inputs = scratch.Allocate<EvalValue>(outerValues.size());
+  for (auto [i, value] : llvm::enumerate(outerValues)) {
+    Answer answer = scope.query(value);
+    if (!answer.completed())
+      return answer.status;
+    new (inputs + i) EvalValue(answer.value);
+  }
+  return CacheKey{snapshot, inputTypes, {inputs, outerValues.size()}};
+}
+
+CacheKey copyCacheKey(const CacheKey &key, llvm::BumpPtrAllocator &allocator,
+                      EvalValueStorageAllocator &values) {
+  auto *op = new (allocator.Allocate<EvalCacheOp>())
+      EvalCacheOp(copyOp(*key.op, allocator));
+  ArrayRef<EvalValue> inputs =
+      allocateArray<EvalValue>(allocator, key.inputs, [&](EvalValue input) {
+        return input ? values.retain(input) : EvalValue();
+      });
+  return {op, copyArray(allocator, key.inputTypes), inputs};
+}
+
+void destroyCacheKey(const CacheKey &key) { destroyOp(*key.op); }
+
 } // namespace mlir::interpreter::detail
+
+using namespace mlir::interpreter;
+using namespace mlir::interpreter::detail;
+
+unsigned llvm::DenseMapInfo<CacheKey>::getHashValue(const CacheKey &key) {
+  llvm::hash_code hash = llvm::hash_combine(*key.op, key.inputTypes);
+  for (EvalValue input : key.inputs)
+    hash = llvm::hash_combine(hash, input ? input.hash() : llvm::hash_code(0));
+  return hash;
+}
+
+bool llvm::DenseMapInfo<CacheKey>::isEqual(const CacheKey &lhs,
+                                           const CacheKey &rhs) {
+  // Equal input types come first, so inputs are only compared with values of
+  // their own type.
+  return *lhs.op == *rhs.op && lhs.inputTypes == rhs.inputTypes &&
+         llvm::all_of_zip(lhs.inputs, rhs.inputs, isInputEqual);
+}
