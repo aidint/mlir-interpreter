@@ -19,7 +19,7 @@ target_link_libraries(InterpreterInterfaces PUBLIC
   MLIRSideEffectInterfaces
   MLIRSupport)
 
-add_library(Interpreter Engine.cpp EvalCache.cpp)
+add_library(Interpreter Engine.cpp EvalCache.cpp EvalCacheKey.cpp)
 
 target_link_libraries(Interpreter PUBLIC
   InterpreterInterfaces
