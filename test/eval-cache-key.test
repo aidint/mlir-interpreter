@@ -1,0 +1,2 @@
+# Checks the snapshot of an operation's structure that cache keys are built on.
+RUN: eval-cache-key-test
