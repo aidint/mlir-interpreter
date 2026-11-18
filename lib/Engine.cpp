@@ -180,7 +180,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   MutableArrayRef<std::optional<Answer>> slots;
   // A frozen cache is still looked up above, but nothing is stored.
   if (cached && !freezes && llvm::any_of(results, [](const Answer &result) {
-        return result.completed() && !result.isUnknown();
+        return result.completed();
       })) {
     slots = cached->results;
     if (!slots.empty())

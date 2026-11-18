@@ -43,10 +43,11 @@ struct CacheLookup {
   MutableArrayRef<std::optional<Answer>> results;
 };
 
-/// This class represents the context cache: the known answers operations
-/// computed, kept across queries. Each `EvalContext` owns one, shared by every
-/// `Engine` on that context, so an answer one query computes is reused by later
-/// queries and other engines, and cached values live as long as the context.
+/// This class represents the context cache: the answers operations completed,
+/// known or unknown, kept across queries. Each `EvalContext` owns one, shared
+/// by every `Engine` on that context, so an answer one query computes is reused
+/// by later queries and other engines, and cached values live as long as the
+/// context.
 /// Entries are keyed by a `CacheKey`, the op's structure plus the answers of
 /// its inputs, so operations with equal keys share one entry. A key holds no
 /// reference to the live IR, so an entry outlives the op that filled it. Only

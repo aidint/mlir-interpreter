@@ -16,7 +16,8 @@ func.func @main(%arg: i32) -> i32 {
   %cond = arith.constant true
   cf.cond_br %cond, ^bb1(%b : i32), ^bb2
 ^bb1(%x: i32):
-  // CHECK-NEXT: %d      unknown     miss     completed
+  // %x is unknown, so this is %a's key: unknown plus 1.
+  // CHECK-NEXT: %d      unknown     hit      completed
   %d = arith.addi %x, %c1 : i32
   // Another block shares the cache.
   // CHECK-NEXT: %e      2           hit      completed
@@ -31,7 +32,8 @@ func.func @main(%arg: i32) -> i32 {
   } else {
     scf.yield %c1 : i32
   }
-  // CHECK-NEXT: %g      unknown     miss     completed
+  // %r is unknown, so this is %a's key too.
+  // CHECK-NEXT: %g      unknown     hit      completed
   %g = arith.addi %r, %c1 : i32
   // CHECK-NEXT: %h      unknown     —        completed
   %h = func.call @main(%g) : (i32) -> i32

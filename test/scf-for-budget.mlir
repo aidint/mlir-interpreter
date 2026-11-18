@@ -22,8 +22,9 @@ func.func @main() {
   // CHECK-NEXT: %again  6           hit      completed
   // SHORT-NEXT: %again  —           miss     exhausted
   %again = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %c0) -> (index) {
-    // CHECK-NEXT: %n      unknown     miss     completed
-    // SHORT-NEXT: %n      unknown     miss     completed
+    // The same key as %next: hit.
+    // CHECK-NEXT: %n      unknown     hit      completed
+    // SHORT-NEXT: %n      unknown     hit      completed
     %n = arith.addi %acc, %i : index
     scf.yield %n : index
   }
@@ -36,8 +37,8 @@ func.func @main() {
     // CHECK-NEXT: %inner  unknown     miss     completed
     // SHORT-NEXT: %inner  unknown     miss     completed
     %inner = scf.for %j = %c0 to %c4 step %c1 iter_args(%a = %k) -> (index) {
-      // CHECK-NEXT: %m      unknown     miss     completed
-      // SHORT-NEXT: %m      unknown     miss     completed
+      // CHECK-NEXT: %m      unknown     hit      completed
+      // SHORT-NEXT: %m      unknown     hit      completed
       %m = arith.addi %a, %j : index
       scf.yield %m : index
     }

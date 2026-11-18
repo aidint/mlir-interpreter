@@ -21,11 +21,11 @@ func.func @main() {
   // CHECK-NEXT: %u      unknown     —        completed
   // NONE:       %u      unknown     —        completed
   %u = arith.divsi %c4, %c2 : i32
-  // An unknown answer isn't stored...
+  // An unknown answer is stored too...
   // CHECK-NEXT: %a      unknown     miss     completed
   %a = arith.addi %u, %c1 : i32
-  // ...so an identical sum misses too.
-  // CHECK-NEXT: %b      unknown     miss     completed
+  // ...so an identical sum hits.
+  // CHECK-NEXT: %b      unknown     hit      completed
   %b = arith.addi %u, %c1 : i32
   // The constants are free, so the sum takes the only step. With no steps,
   // the lookup completes and then evaluation runs out.

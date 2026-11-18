@@ -288,13 +288,14 @@ void testPartialResultsAndLifetime() {
     CHECK(!exhausted.isUnknown());
     first = engine.query(op->getResult(0));
     CHECK(isInteger(*first, 5));
+    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(behaviors.at(op).evaluations == 1);
-    // The unknown wasn't stored, so evaluating again fills its slot too, and
-    // keeps the first answer.
-    CHECK(isInteger(engine.query(op->getResult(1)), 99));
-    CHECK(behaviors.at(op).evaluations == 2);
+    // The signal left its slot empty, so evaluating again fills it, and keeps
+    // the other answers.
     CHECK(isInteger(engine.query(op->getResult(2)), 13));
+    CHECK(behaviors.at(op).evaluations == 2);
     CHECK(isInteger(engine.query(op->getResult(0)), 5));
+    CHECK(engine.query(op->getResult(1)).isUnknown());
     CHECK(behaviors.at(op).evaluations == 2);
     CHECK(first->getValue().isCached());
     f.evalContext.clearCache();
@@ -843,13 +844,38 @@ void testLoopBodyReadsCache() {
   CHECK(outcome == CacheOutcome::Hit);
   CHECK(behavior.evaluations == 2);
 
-  // Outside an iteration, the iteration argument is unknown, so is the body,
-  // and an unknown isn't stored.
-  for (unsigned i = 0; i != 2; ++i) {
+  // Outside an iteration, the iteration argument is unknown, so is the body.
+  // The unknown is stored, so a second query hits it.
+  for (CacheOutcome expected : {CacheOutcome::Miss, CacheOutcome::Hit}) {
     CHECK(engine.query(body->getResult(0), outcome).isUnknown());
-    CHECK(outcome == CacheOutcome::Miss);
+    CHECK(outcome == expected);
   }
-  CHECK(behavior.evaluations == 4);
+  CHECK(behavior.evaluations == 3);
+}
+
+void testUnknownUnderUnboundArgument() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
+                                 f.constant(1), zero);
+  Operation *body;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    body = f.op(1, loop.getRegionIterArgs()[0]);
+    scf::YieldOp::create(f.builder, loc, body->getResult(0));
+  }
+  addOne(body);
+  Engine engine(f.evalContext, 1000);
+  CacheOutcome outcome;
+  // With the iteration argument unbound, the body is unknown, and its entry is
+  // keyed by the unknown argument.
+  CHECK(engine.query(body->getResult(0), outcome).isUnknown());
+  CHECK(outcome == CacheOutcome::Miss);
+  // Each iteration binds the argument, so the body misses that entry.
+  CHECK(isInteger(engine.query(loop.getResult(0)), 3));
+  CHECK(behaviors.at(body).evaluations == 4);
 }
 
 void testLoopFreezesCache() {
@@ -985,6 +1011,7 @@ int main() {
   testSideEffectsOptOut();
   testConstants();
   testLoopBodyReadsCache();
+  testUnknownUnderUnboundArgument();
   testLoopFreezesCache();
   testCapturedBinding();
   testCapturedValues();
