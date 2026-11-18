@@ -34,11 +34,11 @@ func.func @main() {
   %s = arith.addi %c1, %c2 : i32
   // The key reaches only constants, so the hit is free.
   // CHECK-NEXT: %h      3           hit      completed
-  %h = arith.addi %c2, %c1 : i32
+  %h = arith.addi %c1, %c2 : i32
   // CHECK-NEXT: %t      7           miss     completed
   %t = arith.addi %c3, %c4 : i32
   // The key reaches %s and %t, which hit for free. With no steps, %s was
-  // never cached, so hashing runs out before a lookup.
+  // never cached, so building the key runs out before a lookup.
   // CHECK-NEXT: %f      10          miss     completed
   // NONE:       %f      —           —        exhausted
   %f = arith.addi %s, %t : i32

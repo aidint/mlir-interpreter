@@ -32,6 +32,6 @@ func.func @main() {
   %e = arith.addi %c2, %c3 overflow<nsw> : i32
   // Same flags as %e, so this hits.
   // CHECK-NEXT: %f      5           hit      completed
-  %f = arith.addi %c3, %c2 overflow<nsw> : i32
+  %f = arith.addi %c2, %c3 overflow<nsw> : i32
   return
 }

@@ -299,8 +299,9 @@ void testCommutative() {
   CHECK(equivalent(f, "a", "b"));
   // (2, 2) must not match (2, 3) just because each 2 has an equal operand.
   CHECK(!equivalent(f, "twice", "a"));
+  // The cache keys operands in order, so it doesn't share the entry.
   CHECK(f.query("a") == CacheOutcome::Miss);
-  CHECK(f.query("b") == CacheOutcome::Hit);
+  CHECK(f.query("b") == CacheOutcome::Miss);
 }
 
 void testUnknownFallback() {
@@ -327,7 +328,8 @@ void testUnknownFallback() {
   f.behavior("a").evaluate = opaque;
   CHECK(f.query("a") == CacheOutcome::Miss);
   CHECK(f.query("b") == CacheOutcome::Hit);
-  CHECK(f.query("c") == CacheOutcome::Miss);
+  // The cache matches an unknown input with any other unknown.
+  CHECK(f.query("c") == CacheOutcome::Hit);
 
   // An unknown left operand decides the comparison without the right one.
   f.behavior("counted").cacheable = false;
@@ -491,12 +493,16 @@ void testRegions() {
   CHECK(equivalent(f, "d1", "d2"));
   CHECK(!equivalent(f, "d1", "n1"));
 
-  for (auto [first, second] : {std::pair("r1", "r2"), std::pair("n1", "n2"),
-                               std::pair("b1", "b2"), std::pair("d1", "d2")}) {
+  for (auto [first, second] :
+       {std::pair("n1", "n2"), std::pair("b1", "b2"), std::pair("d1", "d2")}) {
     CHECK(f.query(first) == CacheOutcome::Miss);
     CHECK(f.query(second) == CacheOutcome::Hit);
     CHECK(f.behavior(second).evaluations == 0);
   }
+  // The cache keys the nested `arith.addi`'s operands in order, so `r2`'s
+  // swapped operands miss.
+  CHECK(f.query("r1") == CacheOutcome::Miss);
+  CHECK(f.query("r2") == CacheOutcome::Miss);
   for (StringRef name : {"x1", "x2"}) {
     CHECK(f.behavior(name).eligibilityChecks == 0);
     CHECK(f.behavior(name).evaluations == 0);
@@ -574,12 +580,11 @@ void testCustomModel() {
   auto cHash = hash(f, "c");
   CHECK(aHash.completed() && cHash.completed() &&
         aHash.getValue() == cHash.getValue());
-  CHECK(f.query("a") == CacheOutcome::Miss);
-  CHECK(f.query("b") == CacheOutcome::Hit);
-  // `c` collides with `a`'s key but isn't equivalent, so it gets its own entry.
-  CHECK(f.query("c") == CacheOutcome::Miss);
-  CHECK(f.behavior("b").evaluations == 0);
-  CHECK(f.behavior("c").evaluations == 1);
+  // The cache no longer calls custom keys, so only equal operands would hit.
+  for (StringRef name : {"a", "b", "c"}) {
+    CHECK(f.query(name) == CacheOutcome::Miss);
+    CHECK(f.behavior(name).evaluations == 1);
+  }
 }
 
 } // namespace

@@ -135,30 +135,34 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
     return evaluateConstant(op, outcome);
   }
 
-  // Cache-key methods and graph-region operands can re-enter an operation
-  // whose evaluation is in progress.
+  // Eligibility, cache keys and graph-region operands can re-enter an
+  // operation whose evaluation is in progress.
   if (!active.insert(op).second)
     return EvalStatus::Cycle;
   llvm::scope_exit leave([&] { active.erase(op); });
 
   EvalScope scope(*this);
   // Eligibility may query operands, so it runs inside the cycle guard and
-  // shares the query's budget and memo with hashing and evaluation.
+  // shares the query's budget and memo with the key and evaluation.
   auto eligible = evaluable.isCacheable(scope);
   if (!eligible.completed())
     return eligible.status;
   bool cacheable = eligible.getValue();
 
+  // The key lives here, since storing the answers after `evaluate` needs it.
+  llvm::BumpPtrAllocator scratch;
   std::optional<detail::CacheLookup> cached;
   if (cacheable) {
-    auto lookup = ctx.getCache().lookup(op, scope);
+    // Building the key evaluates every input, and a signal from one ends the
+    // query of `op` before any lookup.
+    auto lookup = ctx.getCache().lookup(op, scope, scratch);
     if (!lookup.completed())
       return lookup.status;
     cached = lookup.getValue();
     // An entry can hold an answer for a sibling result only, which is a miss.
     std::optional<Answer> hit;
-    if (cached->entry)
-      hit = cached->entry->results[result.getResultNumber()];
+    if (!cached->results.empty())
+      hit = cached->results[result.getResultNumber()];
     if (outcome)
       *outcome = hit ? CacheOutcome::Hit : CacheOutcome::Miss;
     if (hit)
@@ -173,31 +177,31 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
 
   assert(results.size() == op->getNumResults() &&
          "evaluation must return one answer per operation result");
-  detail::CacheEntry *entry = nullptr;
+  MutableArrayRef<std::optional<Answer>> slots;
   // A frozen cache is still looked up above, but nothing is stored.
   if (cached && !freezes && llvm::any_of(results, [](const Answer &result) {
         return result.completed() && !result.isUnknown();
       })) {
-    entry = cached->entry;
-    if (entry)
-      ctx.getCache().fill(entry, results);
+    slots = cached->results;
+    if (!slots.empty())
+      ctx.getCache().fill(slots, results);
     else
-      entry = ctx.getCache().insert(op, *cached, results, scope);
+      slots = ctx.getCache().insert(cached->key, results);
   }
 
   // Siblings were computed too; record them so querying one later in this
   // query doesn't evaluate `op` again.
   for (auto [i, computed] : llvm::enumerate(results)) {
     Answer sibling = computed;
-    if (entry)
-      if (const auto &slot = entry->results[i])
+    if (!slots.empty())
+      if (const auto &slot = slots[i])
         sibling = *slot;
     if (sibling.completed())
       memoize(op->getResult(i), sibling);
   }
 
-  if (entry)
-    if (const auto &slot = entry->results[result.getResultNumber()])
+  if (!slots.empty())
+    if (const auto &slot = slots[result.getResultNumber()])
       return *slot;
   return results[result.getResultNumber()];
 }
@@ -223,7 +227,7 @@ EvalValue Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
     return value;
   // Converting straight into the cache needs no copy. A null value is stored
   // too, so a constant without one isn't converted again.
-  value = evaluable.toEvalValue(cache.allocator);
+  value = evaluable.toEvalValue(cache.valueAllocator);
   cache.insertConstant(attr, type, value);
   return value;
 }
