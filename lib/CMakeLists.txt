@@ -1,6 +1,5 @@
 add_library(InterpreterInterfaces
   EvalValueStorageAllocator.cpp
-  EvalOperationEquivalence.cpp
   Interfaces/EvaluableOpInterface.cpp
   Interfaces/EvaluableAttrInterface.cpp)
 

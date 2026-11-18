@@ -19,7 +19,6 @@ llvm_config.add_tool_substitutions(
         "engine-lifetime-test",
         "eval-cache-test",
         "eval-cache-key-test",
-        "eval-operation-equivalence-test",
         "eval-value-test",
     ],
     config.interpreter_tools_dirs,
