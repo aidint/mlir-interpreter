@@ -67,7 +67,7 @@ SmallVector<Answer> forward(Operation *op, EvalScope &scope) {
   return SmallVector<Answer>(op->getNumResults(), answer);
 }
 
-/// Answers a new opaque value, which is known, so it is stored.
+/// Answers a new opaque value.
 SmallVector<Answer> opaque(Operation *, EvalScope &scope) {
   return {OpaqueEvalValue::get(scope.getAllocator())};
 }
@@ -324,8 +324,6 @@ void testUnknownFallback() {
   CHECK(equivalent(f, "a", "b"));
   CHECK(!equivalent(f, "a", "c"));
   CHECK(!equivalent(f, "a", "known"));
-  // Forwarding `%arg0` would answer unknown, which isn't stored.
-  f.behavior("a").evaluate = opaque;
   CHECK(f.query("a") == CacheOutcome::Miss);
   CHECK(f.query("b") == CacheOutcome::Hit);
   // The cache matches an unknown input with any other unknown.
@@ -476,9 +474,6 @@ void testRegions() {
   // their enclosing op's key.
   for (StringRef name : {"x1", "x2"})
     f.behavior(name).cacheable = false;
-  // Without operands, they would forward unknown, which isn't stored.
-  for (StringRef name : {"r1", "n1", "b1", "d1"})
-    f.behavior(name).evaluate = opaque;
 
   CHECK(equivalent(f, "r1", "r2"));
   CHECK(!equivalent(f, "r1", "capturedDiffers"));

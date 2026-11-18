@@ -160,8 +160,8 @@ value   evaluated   cache    status
 %s      63          miss     completed
 ```
 
-Unknown answers aren't stored, so `%b` misses like `%a`. Constants and hits are
-free, so 1 step per value is enough when values are queried in order:
+Unknown answers are stored too, so `%b` hits `%a`'s entry. Constants and hits
+are free, so 1 step per value is enough when values are queried in order:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter --budget=1 examples/06-unknown-and-budget.mlir
@@ -172,7 +172,7 @@ value   evaluated   cache    status
 %c4     4           —        completed
 %u      unknown     —        completed
 %a      unknown     miss     completed
-%b      unknown     miss     completed
+%b      unknown     hit      completed
 %s      3           miss     completed
 %h      3           hit      completed
 %t      7           miss     completed
@@ -201,8 +201,11 @@ value   evaluated   cache    status
 %prod   18          miss     completed
 %inner  unknown     miss     completed
 %ij     unknown     miss     completed
-%n      unknown     miss     completed
+%n      unknown     hit      completed
 ```
+
+Rows in a loop body are queried outside any iteration, so their block arguments
+are unknown. `%n` adds two unknowns, as `%next` does, so it hits `%next`'s entry.
 
 A loop that isn't inside another loop is cached like any other op. It matches a
 loop over other SSA values with equal values and the same body structure:
@@ -219,7 +222,7 @@ value   evaluated   cache    status
 %zero   0           miss     completed
 %four   4           miss     completed
 %b      6           hit      completed
-%t      unknown     miss     completed
+%t      unknown     hit      completed
 %c      0           miss     completed
 %u      unknown     miss     completed
 ```

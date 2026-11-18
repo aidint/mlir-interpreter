@@ -38,11 +38,14 @@ void EvalCache::fill(MutableArrayRef<std::optional<Answer>> slots,
   for (auto [slot, answer] : llvm::zip(slots, answers)) {
     assert((answer.completed() || !answer.value) &&
            "incomplete evaluations cannot have a value");
-    // TODO: Store unknowns too, now that keys include the values a loop binds
-    // (MLIR-36).
-    if (slot || !answer.completed() || answer.isUnknown())
+    // A signal describes one run, so its slot stays empty for a later query to
+    // fill.
+    if (slot || !answer.completed())
       continue;
-    slot = valueAllocator.retain(answer.getValue());
+    // An unknown has no value to retain.
+    slot = answer.isUnknown()
+               ? answer
+               : Answer(valueAllocator.retain(answer.getValue()));
   }
 }
 

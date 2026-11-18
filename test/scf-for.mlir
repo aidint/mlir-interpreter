@@ -34,7 +34,8 @@ func.func @main() {
       %m = arith.addi %a, %i : index
       scf.yield %m : index
     }
-    // CHECK-NEXT: %next   unknown     miss     completed
+    // %row hits, so both inputs are unknown, as %m's are: hit.
+    // CHECK-NEXT: %next   unknown     hit      completed
     %next = arith.addi %acc, %row : index
     scf.yield %next : index
   }
@@ -43,9 +44,9 @@ func.func @main() {
 
 // -----
 
-// A body op queried outside its loop answers unknown, which isn't stored, so a
-// later iteration can't hit it. "test.effect" makes %cap uncacheable, so %use
-// runs its loop again.
+// A body op queried outside its loop answers unknown, which is stored under its
+// unbound inputs. A later iteration binds them, so it misses. "test.effect"
+// makes %cap uncacheable, so %use runs its loop again.
 
 // CHECK: value   evaluated   cache    status
 func.func @main() {
@@ -63,7 +64,8 @@ func.func @main() {
       %m = arith.addi %a, %i : index
       scf.yield %m : index
     }
-    // CHECK-NEXT: %next   unknown     miss     completed
+    // %row hits, so both inputs are unknown, as %m's are: hit.
+    // CHECK-NEXT: %next   unknown     hit      completed
     %next = arith.addi %acc, %row : index
     "test.effect"() : () -> ()
     scf.yield %next : index
@@ -97,6 +99,33 @@ func.func @main() {
     // CHECK-NEXT: %s      unknown     miss     completed
     %s = arith.addi %a, %b : i32
     scf.yield %b, %s : i32, i32
+  }
+  return
+}
+
+// -----
+
+// A loop's results are stored together, unknown ones too, so %p#1 hits instead
+// of running the loop again.
+
+// CHECK: value   evaluated   cache    status
+func.func @main(%arg: index) {
+  // CHECK-NEXT: %c0     0           —        completed
+  %c0 = arith.constant 0 : index
+  // CHECK-NEXT: %c1     1           —        completed
+  %c1 = arith.constant 1 : index
+  // CHECK-NEXT: %c4     4           —        completed
+  %c4 = arith.constant 4 : index
+  // CHECK-NEXT: %p#0    6           miss     completed
+  // CHECK-NEXT: %p#1    unknown     hit      completed
+  %p:2 = scf.for %i = %c0 to %c4 step %c1
+      iter_args(%a = %c0, %b = %c0) -> (index, index) {
+    // CHECK-NEXT: %na     unknown     miss     completed
+    %na = arith.addi %a, %i : index
+    // Two unknowns, as %na: hit.
+    // CHECK-NEXT: %nb     unknown     hit      completed
+    %nb = arith.addi %b, %arg : index
+    scf.yield %na, %nb : index, index
   }
   return
 }
@@ -161,7 +190,8 @@ func.func @main(%arg: index) {
   // CHECK-NEXT: %ult    4           miss     completed
   %ult = scf.for unsigned %i = %b0 to %b200 step %b50
       iter_args(%a = %b0) -> (i8) : i8 {
-    // CHECK-NEXT: %u      unknown     miss     completed
+    // The same key as %s: hit.
+    // CHECK-NEXT: %u      unknown     hit      completed
     %u = arith.addi %a, %b1 : i8
     scf.yield %u : i8
   }

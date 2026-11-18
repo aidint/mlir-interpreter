@@ -29,7 +29,8 @@ func.func @main() {
     %inner = scf.for %j = %c0 to %c4 step %c1 iter_args(%a = %acc) -> (index) {
       // CHECK-NEXT: %ij     unknown     miss     completed
       %ij = arith.muli %i, %j : index
-      // CHECK-NEXT: %n      unknown     miss     completed
+      // Its inputs are unknown, as %next's are, so it hits %next's entry.
+      // CHECK-NEXT: %n      unknown     hit      completed
       %n = arith.addi %a, %ij : index
       scf.yield %n : index
     }
