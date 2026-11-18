@@ -29,6 +29,7 @@ add_executable(eval-cache-key-test EvalCacheKey.cpp)
 
 target_link_libraries(eval-cache-key-test PRIVATE
   Interpreter
+  InterpreterBuiltin
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRFuncDialect
