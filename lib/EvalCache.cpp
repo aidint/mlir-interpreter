@@ -11,7 +11,7 @@ EvalResult<CacheLookup> EvalCache::lookup(Operation *op, EvalScope &scope,
   if (!key.completed())
     return key.status;
   CacheLookup result{key.getValue(), {}};
-  if (auto it = entries.find(result.key); it != entries.end())
+  if (auto it = results.find(result.key); it != results.end())
     result.results = it->second;
   return result;
 }
@@ -20,35 +20,34 @@ MutableArrayRef<std::optional<Answer>>
 EvalCache::insert(const CacheKey &key, ArrayRef<Answer> answers) {
   // Evaluating the op can run nested queries that add an entry for an equal
   // key, so look it up again instead of trusting the lookup's miss.
-  auto it = entries.find(key);
-  if (it == entries.end()) {
-    auto *results =
-        entryAllocator.Allocate<std::optional<Answer>>(answers.size());
-    std::uninitialized_fill_n(results, answers.size(), std::nullopt);
-    CacheKey copy = copyCacheKey(key, entryAllocator, allocator);
-    it = entries.try_emplace(copy, results, answers.size()).first;
+  auto it = results.find(key);
+  if (it == results.end()) {
+    auto *slots = slotAllocator.Allocate<std::optional<Answer>>(answers.size());
+    std::uninitialized_fill_n(slots, answers.size(), std::nullopt);
+    CacheKey copy = copyCacheKey(key, keyAllocator, valueAllocator);
+    it = results.try_emplace(copy, slots, answers.size()).first;
   }
   fill(it->second, answers);
   return it->second;
 }
 
-void EvalCache::fill(MutableArrayRef<std::optional<Answer>> results,
+void EvalCache::fill(MutableArrayRef<std::optional<Answer>> slots,
                      ArrayRef<Answer> answers) {
-  assert(answers.size() == results.size() &&
+  assert(answers.size() == slots.size() &&
          "cache filling requires one answer per result");
-  for (auto [slot, answer] : llvm::zip(results, answers)) {
+  for (auto [slot, answer] : llvm::zip(slots, answers)) {
     assert((answer.completed() || !answer.value) &&
            "incomplete evaluations cannot have a value");
     // TODO: Store unknowns too, now that keys include the values a loop binds
     // (MLIR-36).
     if (slot || !answer.completed() || answer.isUnknown())
       continue;
-    slot = allocator.retain(answer.getValue());
+    slot = valueAllocator.retain(answer.getValue());
   }
 }
 
 void EvalCache::destroyKeys() {
-  for (const auto &entry : entries)
+  for (const auto &entry : results)
     destroyCacheKey(entry.first);
 }
 

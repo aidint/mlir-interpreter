@@ -62,19 +62,20 @@ public:
 
   void clear() {
     destroyKeys();
-    entries.clear();
-    entryAllocator.Reset();
+    results.clear();
+    keyAllocator.Reset();
+    slotAllocator.Reset();
     constants.clear();
-    allocator.beginRetaining();
+    valueAllocator.beginRetaining();
   }
 
 private:
   friend class interpreter::EvalContext;
   friend class interpreter::Engine;
 
-  explicit EvalCache(EvalContext &ctx) : allocator(ctx, true) {}
+  explicit EvalCache(EvalContext &ctx) : valueAllocator(ctx, true) {}
 
-  void beginQuery() { allocator.beginRetaining(); }
+  void beginQuery() { valueAllocator.beginRetaining(); }
 
   /// Builds the key of `op` in `scratch`, which evaluates its inputs, and finds
   /// its entry. A signal from an input is returned, and nothing is looked up.
@@ -84,7 +85,7 @@ private:
   /// exists, and returns its result slots.
   MutableArrayRef<std::optional<Answer>> insert(const CacheKey &key,
                                                 ArrayRef<Answer> answers);
-  void fill(MutableArrayRef<std::optional<Answer>> results,
+  void fill(MutableArrayRef<std::optional<Answer>> slots,
             ArrayRef<Answer> answers);
   void destroyKeys();
   /// Returns the cached value of a constant with `attr` and `type`, setting
@@ -103,11 +104,15 @@ private:
     constants.try_emplace({attr, type}, value);
   }
 
-  EvalValueStorageAllocator allocator;
-  /// The result slots of each entry. Keys, slots and their arrays live in
-  /// `entryAllocator`.
-  DenseMap<CacheKey, MutableArrayRef<std::optional<Answer>>> entries;
-  llvm::BumpPtrAllocator entryAllocator;
+  /// Every value the cache keeps: stored answers, key inputs and constants.
+  /// `clear()` keeps them, since answers handed out borrow them.
+  EvalValueStorageAllocator valueAllocator;
+  /// The result slots of each entry, keyed by a copy in `keyAllocator`.
+  DenseMap<CacheKey, MutableArrayRef<std::optional<Answer>>> results;
+  /// The copied keys: their snapshot arrays and properties.
+  llvm::BumpPtrAllocator keyAllocator;
+  /// The result slots of every entry.
+  llvm::BumpPtrAllocator slotAllocator;
   /// The values of cacheable constants, keyed by their attribute and type.
   DenseMap<std::pair<Attribute, Type>, EvalValue> constants;
 };

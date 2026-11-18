@@ -227,7 +227,7 @@ EvalValue Engine::evaluateConstant(Operation *op, CacheOutcome *outcome) {
     return value;
   // Converting straight into the cache needs no copy. A null value is stored
   // too, so a constant without one isn't converted again.
-  value = evaluable.toEvalValue(cache.allocator);
+  value = evaluable.toEvalValue(cache.valueAllocator);
   cache.insertConstant(attr, type, value);
   return value;
 }
