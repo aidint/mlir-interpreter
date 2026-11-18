@@ -41,13 +41,14 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
     InterfaceMethod<[{
         Returns whether this operation's results may be retained across queries,
         or returns Exhausted, NeedsOrder or Cycle. By default only operations
-        without side effects are cached, since an operation with them can
-        compute different results from equal operands.
+        without side effects or successors are cached, as `defaultIsCacheable`
+        decides. An override must not cache an operation with successors
+        either, and can call `defaultIsCacheable` to keep both rules.
       }],
       "::mlir::interpreter::EvalResult<bool>", "isCacheable",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
       /*defaultImplementation=*/[{
-        return ::mlir::isMemoryEffectFree($_op.getOperation());
+        return ::mlir::interpreter::defaultIsCacheable($_op.getOperation());
       }]>
   ];
 }

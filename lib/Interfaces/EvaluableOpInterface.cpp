@@ -28,6 +28,12 @@ EvalResult<bool> isEvaluatedValueEqual(Value lhs, Value rhs, EvalScope &scope) {
   return rhsValue && lhsValue.isEqual(rhsValue);
 }
 
+bool defaultIsCacheable(Operation *op) {
+  // An op with side effects can compute different results from equal
+  // operands, and a cache key can't hold the blocks that successors name.
+  return isMemoryEffectFree(op) && op->getNumSuccessors() == 0;
+}
+
 EvalResult<llvm::hash_code> detail::getDefaultHash(Operation *op,
                                                    EvalScope &scope) {
   return EvalOperationEquivalence::computeHash(

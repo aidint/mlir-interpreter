@@ -84,6 +84,10 @@ EvalResult<llvm::hash_code> hashEvaluatedValue(Value value, EvalScope &scope);
 /// from evaluating either is returned.
 EvalResult<bool> isEvaluatedValueEqual(Value lhs, Value rhs, EvalScope &scope);
 
+/// The default `isCacheable`: whether `op` has no side effects and no
+/// successors. An override can call it to keep these rules.
+bool defaultIsCacheable(Operation *op);
+
 namespace detail {
 /// The default `getHash` and `isEquivalentTo`: `EvalOperationEquivalence`
 /// with `hashEvaluatedValue` and `isEvaluatedValueEqual`.

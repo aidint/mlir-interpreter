@@ -159,6 +159,8 @@ struct SubIOpEval : BinaryOpEval<SubIOpEval, arith::SubIOp> {
 
 struct MulIOpEval : BinaryOpEval<MulIOpEval, arith::MulIOp> {
   EvalResult<bool> isCacheable(Operation *op, EvalScope &scope) const {
+    if (!defaultIsCacheable(op))
+      return false;
     // A zero left operand decides the product without the right one, which a
     // cache lookup would evaluate.
     Answer lhs = scope.query(op->getOperand(0));

@@ -147,8 +147,7 @@ Answer Engine::compute(Value value, CacheOutcome *outcome) {
   auto eligible = evaluable.isCacheable(scope);
   if (!eligible.completed())
     return eligible.status;
-  // A root's successors are outside its key, so an op with them isn't cached.
-  bool cacheable = eligible.getValue() && op->getNumSuccessors() == 0;
+  bool cacheable = eligible.getValue();
 
   // The key lives here, since storing the answers after `evaluate` needs it.
   llvm::BumpPtrAllocator scratch;
