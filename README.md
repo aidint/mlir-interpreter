@@ -51,8 +51,9 @@ all queries share one cache. It prints one row per result:
 - `cache`: the outcome of the lookup for that result's own operation, not for
   nested queries. It shows `hit` or `miss` when the lookup completes, and `—`
   when the operation isn't cached (constants whose attribute doesn't opt in,
-  such as integers, and operations without an evaluation function) or hashing
-  ran out first. A query can miss and then exhaust.
+  such as integers, and operations without an evaluation function) or one of
+  its inputs signaled while its key was built. A query can miss and then
+  exhaust.
 - `status`: `completed`, `exhausted`, `needs order` or `cycle`.
 
 Values are queried on demand, so a row doesn't depend on which branch would
@@ -62,20 +63,20 @@ of ops without an evaluation function (`scf.if`, `func.call`, ...). The tool
 reports an error only when there is no `@main` or it has no body.
 
 `--budget=N` (default 1000) is the step budget of each reported value: it is
-reset for every row, while the cache is kept for the whole run. Hashing,
-equality and evaluation share that budget. Each evaluated operation, and each
-loop iteration, costs a step, while constants cost none. A hit can still spend budget computing its
-key, since keys hold evaluated operands, but only for operands that are neither
-constants nor cached.
+reset for every row, while the cache is kept for the whole run. Building keys
+and evaluation share that budget. Each evaluated operation, and each loop
+iteration, costs a step, while constants cost none. A hit can still spend budget
+building its key, since a key holds the answer of every input, but only for
+inputs that are neither constants nor cached.
 
 Other options: `--allow-unregistered-dialect`, and `--split-input-file` and
 `--verify-diagnostics`, which work as in `mlir-opt`.
 
 ### Examples
 
-`arith.addi`, `arith.muli` and `arith.subi` are keyed by their kind, result
-type, overflow flags and evaluated operands. Addition and multiplication also
-match swapped operands. Each example explains its rows in comments.
+An operation is keyed by its structure (kind, attributes, properties, result
+types and regions) and the answers of its inputs, in order: its operands and the
+values its regions capture. Each example explains its rows in comments.
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/01-basic.mlir
@@ -105,7 +106,8 @@ value   evaluated   cache    status
 %f      2           hit      completed
 ```
 
-Swapped operands hit for addition and multiplication, but not subtraction:
+Operands are compared in order, so swapped operands miss unless they are
+equal:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/03-swapped-operands.mlir
@@ -114,9 +116,9 @@ value   evaluated   cache    status
 %c3     3           —        completed
 %two    2           —        completed
 %a      5           miss     completed
-%b      5           hit      completed
+%b      5           miss     completed
 %c      6           miss     completed
-%d      6           hit      completed
+%d      6           miss     completed
 %e      1           miss     completed
 %f      -1          miss     completed
 %g      0           miss     completed
@@ -142,8 +144,8 @@ value   evaluated   cache    status
 %f      5           hit      completed
 ```
 
-A known zero keys a product without its other operand, so every product with a
-zero shares one entry:
+A known zero left operand decides a product without the right one, which a
+lookup would evaluate, so that product isn't cached:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/05-zero-product.mlir
@@ -152,9 +154,9 @@ value   evaluated   cache    status
 %zero   0           —        completed
 %c7     7           —        completed
 %c9     9           —        completed
-%p      0           miss     completed
-%q      0           hit      completed
-%r      0           hit      completed
+%p      0           —        completed
+%q      0           —        completed
+%r      0           miss     completed
 %s      63          miss     completed
 ```
 
@@ -178,14 +180,14 @@ value   evaluated   cache    status
 ```
 
 With `--budget=0` only constants and `unknown` values complete. A query runs out
-either after the lookup (`miss`, as for `%s`) or during hashing (`—`, as for
-`%f`, whose operand `%s` was never cached).
+either after the lookup (`miss`, as for `%s`) or while its key is built (`—`,
+as for `%f`, whose operand `%s` was never cached).
 
 `scf.for` binds its induction variable and iteration arguments for each
 iteration, and nested loops iterate inside the outer iteration. A loop freezes
-the cache while it iterates: ops inside it look up the cache with keys computed
-from the current iteration, but nothing is stored, since answers can depend on
-the iteration:
+the cache while it iterates: ops inside it look up the cache with keys that hold
+the current iteration's values, but nothing is stored, so a loop doesn't add an
+entry in every iteration:
 
 ```sh
 $ build/debug/tools/interpreter/interpreter examples/07-loops.mlir

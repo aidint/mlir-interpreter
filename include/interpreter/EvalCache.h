@@ -2,6 +2,7 @@
 #define INTERPRETER_EVALCACHE_H
 
 #include "interpreter/Answer.h"
+#include "interpreter/EvalCacheKey.h"
 #include "interpreter/EvalContext.h"
 #include "interpreter/EvalResult.h"
 #include "interpreter/EvalValue.h"
@@ -12,8 +13,6 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Allocator.h"
 
 #include <cassert>
@@ -29,45 +28,40 @@ namespace mlir::interpreter {
 
 class Engine;
 class EvalScope;
-class EvaluableOpInterface;
 
 namespace detail {
 
-/// This class represents the cached answers of an operation and of the
-/// operations equivalent to it, with one slot per result. An empty slot has no
-/// known answer yet and can be filled later.
-struct CacheEntry {
-  Operation *op;
-  MutableArrayRef<std::optional<Answer>> results;
-};
+static_assert(std::is_trivially_destructible_v<std::optional<Answer>>,
+              "result slots are bump allocated and never destroyed");
 
-static_assert(std::is_trivially_destructible_v<CacheEntry> &&
-                  std::is_trivially_destructible_v<std::optional<Answer>>,
-              "cache entries and their result slots are bump allocated and "
-              "never destroyed");
-
-/// This class represents the outcome of a cache lookup: the operation's key,
-/// the matching entry (null on a miss), and the number of candidates in the
-/// key's bucket that were already examined, so insertion can resume the search.
+/// This class represents the outcome of a cache lookup: the key built for the
+/// operation, and the result slots of its entry, empty on a miss. The key
+/// borrows the live ops and the query's values, so it is only valid while
+/// both are.
 struct CacheLookup {
-  llvm::hash_code key;
-  CacheEntry *entry;
-  size_t searched;
+  CacheKey key;
+  MutableArrayRef<std::optional<Answer>> results;
 };
 
 /// This class represents the context cache: the known answers operations
 /// computed, kept across queries. Each `EvalContext` owns one, shared by every
 /// `Engine` on that context, so an answer one query computes is reused by later
 /// queries and other engines, and cached values live as long as the context.
-/// Entries are bucketed by `getHash` and matched with `isEquivalentTo`, so
-/// equivalent operations share one entry. Only `Engine` fills it, inside a
-/// query, because filling copies values out of the query allocator and dedups
-/// them by address, which is only valid while that query runs. Constant-like
-/// ops skip the entries: their value depends only on their uniqued attribute
-/// and type, so those key a separate map.
+/// Entries are keyed by a `CacheKey`, the op's structure plus the answers of
+/// its inputs, so operations with equal keys share one entry. A key holds no
+/// reference to the live IR, so an entry outlives the op that filled it. Only
+/// `Engine` fills it, inside a query, because filling copies values out of the
+/// query allocator and dedups them by address, which is only valid while that
+/// query runs. Constant-like ops skip the entries: their value depends only on
+/// their uniqued attribute and type, so those key a separate map.
 class EvalCache {
 public:
+  EvalCache(const EvalCache &) = delete;
+  EvalCache &operator=(const EvalCache &) = delete;
+  ~EvalCache() { destroyKeys(); }
+
   void clear() {
+    destroyKeys();
     entries.clear();
     entryAllocator.Reset();
     constants.clear();
@@ -82,19 +76,17 @@ private:
 
   void beginQuery() { allocator.beginRetaining(); }
 
-  /// Finds the entry for `op` or for an operation equivalent to it. `op` must
-  /// implement `EvaluableOpInterface`.
-  EvalResult<CacheLookup> lookup(Operation *op, EvalScope &scope);
-  /// Fills the entry for `op` or for an equivalent operation, creating one if
-  /// none exists. Only candidates appended since `lookup` are compared.
-  CacheEntry *insert(Operation *op, const CacheLookup &lookup,
-                     ArrayRef<Answer> answers, EvalScope &scope);
-  void fill(CacheEntry *entry, ArrayRef<Answer> answers);
-  /// Returns the first entry in `key`'s bucket, starting at index `next`, that
-  /// belongs to `op` or to an operation equivalent to it. `next` is left at the
-  /// match, or at the bucket size on a miss.
-  CacheEntry *findEquivalent(EvaluableOpInterface op, llvm::hash_code key,
-                             size_t &next, EvalScope &scope);
+  /// Builds the key of `op` in `scratch`, which evaluates its inputs, and finds
+  /// its entry. A signal from an input is returned, and nothing is looked up.
+  EvalResult<CacheLookup> lookup(Operation *op, EvalScope &scope,
+                                 llvm::BumpPtrAllocator &scratch);
+  /// Fills the entry for `key`, adding one that owns a copy of `key` if none
+  /// exists, and returns its result slots.
+  MutableArrayRef<std::optional<Answer>> insert(const CacheKey &key,
+                                                ArrayRef<Answer> answers);
+  void fill(MutableArrayRef<std::optional<Answer>> results,
+            ArrayRef<Answer> answers);
+  void destroyKeys();
   /// Returns the cached value of a constant with `attr` and `type`, setting
   /// `hit` to whether one is stored. A hit may return null, which means the
   /// constant has no value.
@@ -112,7 +104,9 @@ private:
   }
 
   EvalValueStorageAllocator allocator;
-  DenseMap<llvm::hash_code, SmallVector<CacheEntry *>> entries;
+  /// The result slots of each entry. Keys, slots and their arrays live in
+  /// `entryAllocator`.
+  DenseMap<CacheKey, MutableArrayRef<std::optional<Answer>>> entries;
   llvm::BumpPtrAllocator entryAllocator;
   /// The values of cacheable constants, keyed by their attribute and type.
   DenseMap<std::pair<Attribute, Type>, EvalValue> constants;

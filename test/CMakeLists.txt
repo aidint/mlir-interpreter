@@ -56,6 +56,7 @@ target_link_libraries(eval-operation-equivalence-test PRIVATE
 add_executable(eval-value-test EvalValue.cpp)
 
 target_link_libraries(eval-value-test PRIVATE
+  Interpreter
   InterpreterBuiltin
   MLIRIR
   MLIRSupport

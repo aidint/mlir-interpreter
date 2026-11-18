@@ -1,6 +1,5 @@
 add_library(InterpreterInterfaces
   EvalValueStorageAllocator.cpp
-  EvalContext.cpp
   EvalOperationEquivalence.cpp
   Interfaces/EvaluableOpInterface.cpp
   Interfaces/EvaluableAttrInterface.cpp)
@@ -19,7 +18,11 @@ target_link_libraries(InterpreterInterfaces PUBLIC
   MLIRSideEffectInterfaces
   MLIRSupport)
 
-add_library(Interpreter Engine.cpp EvalCache.cpp EvalCacheKey.cpp)
+add_library(Interpreter
+  Engine.cpp
+  EvalCache.cpp
+  EvalCacheKey.cpp
+  EvalContext.cpp)
 
 target_link_libraries(Interpreter PUBLIC
   InterpreterInterfaces

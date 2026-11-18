@@ -20,7 +20,7 @@ namespace mlir::interpreter {
 /// The outcome of the cache lookup for a queried value's own operation.
 enum class CacheOutcome {
   /// No lookup completed: the operation isn't cacheable, or its eligibility
-  /// check or hashing signaled.
+  /// check or one of its inputs signaled.
   None,
   /// The lookup found a completed answer for the value.
   Hit,

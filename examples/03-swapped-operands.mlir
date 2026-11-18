@@ -1,7 +1,7 @@
 // RUN: interpreter %s | FileCheck %s --match-full-lines
 
-// Addition and multiplication match swapped operands; subtraction keeps its
-// operand order.
+// Operands are compared in order, so swapped operands miss, even for addition
+// and multiplication. Swapping equal operands still hits.
 
 // CHECK: value   evaluated   cache    status
 func.func @main() {
@@ -14,14 +14,14 @@ func.func @main() {
   // First 2 + 3.
   // CHECK-NEXT: %a      5           miss     completed
   %a = arith.addi %c2, %c3 : i32
-  // 3 + 2 matches 2 + 3.
-  // CHECK-NEXT: %b      5           hit      completed
+  // 3 + 2 doesn't match 2 + 3.
+  // CHECK-NEXT: %b      5           miss     completed
   %b = arith.addi %c3, %c2 : i32
   // First 2 * 3.
   // CHECK-NEXT: %c      6           miss     completed
   %c = arith.muli %c2, %c3 : i32
-  // 3 * 2 matches 2 * 3.
-  // CHECK-NEXT: %d      6           hit      completed
+  // 3 * 2 doesn't match 2 * 3.
+  // CHECK-NEXT: %d      6           miss     completed
   %d = arith.muli %c3, %c2 : i32
   // First 3 - 2.
   // CHECK-NEXT: %e      1           miss     completed

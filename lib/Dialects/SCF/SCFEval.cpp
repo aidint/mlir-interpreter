@@ -50,9 +50,10 @@ struct ForOpEval : EvaluableOpInterface::ExternalModel<ForOpEval, scf::ForOp> {
     // A step that isn't strictly positive is undefined.
     if (isUnsigned ? step.isZero() : !step.isStrictlyPositive())
       return unknown;
-    // Answers computed in an iteration can depend on its bindings, which cache
-    // keys don't include, and each iteration would add entries, so nothing is
-    // stored until the loop ends.
+    // Cache keys include the bindings an op's regions capture, so an answer
+    // stored in an iteration would be sound. The freeze stays so that a loop
+    // doesn't add an entry in every iteration: nothing is stored until it
+    // ends.
     CacheFreeze freeze = scope.freezeCache();
     for (APInt iv = control[0]; isUnsigned ? iv.ult(ub) : iv.slt(ub);) {
       // Each iteration costs a step, so a loop whose body costs nothing still

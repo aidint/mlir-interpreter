@@ -55,14 +55,9 @@ public:
 
 struct Behavior {
   unsigned eligibilityChecks = 0;
-  unsigned hashes = 0;
   unsigned evaluations = 0;
   std::function<EvalResult<bool>(Operation *, EvalScope &)> cacheable =
       [](Operation *, EvalScope &) { return true; };
-  std::function<EvalResult<llvm::hash_code>(Operation *, EvalScope &)> hash =
-      [](Operation *op, EvalScope &) { return llvm::hash_value(op); };
-  std::function<EvalResult<bool>(Operation *, Operation *, EvalScope &)> equal =
-      [](Operation *op, Operation *other, EvalScope &) { return op == other; };
   std::function<SmallVector<Answer>(Operation *, EvalScope &)> evaluate =
       [](Operation *op, EvalScope &scope) {
         for (Value operand : op->getOperands()) {
@@ -77,20 +72,11 @@ struct Behavior {
 
 std::map<Operation *, Behavior> behaviors;
 
+/// This class represents a test model whose eligibility and evaluation come
+/// from the op's `Behavior`.
 struct TestModel
     : EvaluableOpInterface::ExternalModel<TestModel,
                                           UnrealizedConversionCastOp> {
-  EvalResult<llvm::hash_code> getHash(Operation *op, EvalScope &scope) const {
-    auto &behavior = behaviors.at(op);
-    ++behavior.hashes;
-    return behavior.hash(op, scope);
-  }
-
-  EvalResult<bool> isEquivalentTo(Operation *op, Operation *other,
-                                  EvalScope &scope) const {
-    return behaviors.at(op).equal(op, other, scope);
-  }
-
   SmallVector<Answer> evaluate(Operation *op, EvalScope &scope) const {
     auto &behavior = behaviors.at(op);
     ++behavior.evaluations;
@@ -175,14 +161,24 @@ struct Fixture {
     poison = {};
   }
 
-  Operation *op(unsigned results = 1, ValueRange operands = {}) {
+  /// Returns an op whose `key` attribute is `key`, so it shares an entry with
+  /// any op with the same key, result count and input answers.
+  Operation *keyedOp(int64_t key, unsigned results = 1,
+                     ValueRange operands = {}) {
     OperationState state(builder.getUnknownLoc(),
                          UnrealizedConversionCastOp::getOperationName());
     state.addTypes(SmallVector<Type>(results, builder.getI32Type()));
     state.addOperands(operands);
+    state.addAttribute("key", builder.getI64IntegerAttr(key));
     Operation *result = builder.create(state);
     behaviors.try_emplace(result);
     return result;
+  }
+
+  /// Returns an op that shares no entry. Its key is negative, so it differs
+  /// from every key a test picks.
+  Operation *op(unsigned results = 1, ValueRange operands = {}) {
+    return keyedOp(--lastKey, results, operands);
   }
 
   Value constant(int64_t value) {
@@ -201,40 +197,8 @@ struct Fixture {
     return result->getResult(0);
   }
 
-  Operation *hashedOp(llvm::hash_code key, unsigned results = 1) {
-    Operation *result = op(results);
-    behaviors.at(result).hash = [key](Operation *, EvalScope &) { return key; };
-    return result;
-  }
+  int64_t lastKey = 0;
 };
-
-void semanticKey(Operation *op) {
-  behaviors.at(op).hash = [](Operation *op,
-                             EvalScope &scope) -> EvalResult<llvm::hash_code> {
-    Answer answer = scope.query(op->getOperand(0));
-    if (!answer.completed())
-      return answer.status;
-    if (const auto &value = answer.getValue())
-      return value.hash();
-    return llvm::hash_value(op->getOperand(0).getAsOpaquePointer());
-  };
-  behaviors.at(op).equal = [](Operation *op, Operation *other,
-                              EvalScope &scope) -> EvalResult<bool> {
-    if (op->getName() != other->getName() || other->getNumOperands() != 1 ||
-        op->getResultTypes() != other->getResultTypes())
-      return false;
-    Answer lhs = scope.query(op->getOperand(0));
-    if (!lhs.completed())
-      return lhs.status;
-    Answer rhs = scope.query(other->getOperand(0));
-    if (!rhs.completed())
-      return rhs.status;
-    if (lhs.isUnknown() || rhs.isUnknown())
-      return lhs.isUnknown() && rhs.isUnknown() &&
-             op->getOperand(0) == other->getOperand(0);
-    return lhs.getValue().isEqual(rhs.getValue());
-  };
-}
 
 /// Caches `op` only when its `size` attribute is at least 100, as a model
 /// may cache a large `linalg.matmul` but not a small one.
@@ -265,14 +229,29 @@ void opaque(Operation *op) {
   };
 }
 
+/// Answers `value` on every evaluation of `op`.
+void answer(Operation *op, int64_t value) {
+  behaviors.at(op).evaluate = [value](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), value)};
+  };
+}
+
+/// Creates an `scf.execute_region` that yields the value `body` creates in it.
+Value executeRegion(OpBuilder &builder, function_ref<Value()> body) {
+  Location loc = builder.getUnknownLoc();
+  auto op = scf::ExecuteRegionOp::create(builder, loc, builder.getI32Type());
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToStart(&op.getRegion().emplaceBlock());
+  scf::YieldOp::create(builder, loc, body());
+  return op.getResult(0);
+}
+
 void testSemanticReuseAndBudget() {
   Fixture f;
-  Operation *first = f.op(1, f.uncached(9));
-  Operation *second = f.op(1, f.uncached(9));
-  semanticKey(first);
-  semanticKey(second);
+  Operation *first = f.keyedOp(1, 1, f.uncached(9));
+  Operation *second = f.keyedOp(1, 1, f.uncached(9));
 
-  // `first` costs 2 steps: hashing evaluates its operand, which evaluating
+  // `first` costs 2 steps: its key evaluates its operand, which evaluating
   // `first` then reuses, and evaluating `first` takes the second.
   Engine oneStep(f.evalContext, 1);
   CHECK(oneStep.query(first->getResult(0)).status == EvalStatus::Exhausted);
@@ -281,34 +260,13 @@ void testSemanticReuseAndBudget() {
   CHECK(isInteger(twoSteps.query(first->getResult(0)), 7));
   CHECK(behaviors.at(first).evaluations == 1);
 
-  // `second` also costs 2 steps: hashing evaluates its operand, and comparing
-  // with `first` evaluates `first`'s operand, then hits.
-  CHECK(oneStep.query(second->getResult(0)).status == EvalStatus::Exhausted);
-  CHECK(isInteger(twoSteps.query(second->getResult(0)), 7));
+  // `second` costs only the step of its operand: comparing keys queries
+  // nothing, so it hits.
+  Engine noSteps(f.evalContext, 0);
+  CHECK(noSteps.query(second->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(isInteger(oneStep.query(second->getResult(0)), 7));
   CHECK(behaviors.at(second).evaluations == 0);
   CHECK(behaviors.at(first).evaluations == 1);
-}
-
-void testZeroHashCollision() {
-  Fixture f;
-  Engine engine(f.evalContext, 1);
-  EvalScope scope(engine);
-  Operation *first = f.hashedOp(llvm::hash_code(0));
-  Operation *second = f.hashedOp(llvm::hash_code(0));
-  behaviors.at(second).evaluate = [](Operation *, EvalScope &scope) {
-    return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
-  };
-  auto comparison =
-      cast<EvaluableOpInterface>(second).isEquivalentTo(first, scope);
-  CHECK(comparison.completed());
-  CHECK(!comparison.getValue());
-  CHECK(isInteger(engine.query(first->getResult(0)), 7));
-  CHECK(isInteger(engine.query(second->getResult(0)), 8));
-  CHECK(behaviors.at(first).evaluations == 1);
-  CHECK(behaviors.at(second).evaluations == 1);
-  Engine noSteps(f.evalContext, 0);
-  CHECK(isInteger(noSteps.query(first->getResult(0)), 7));
-  CHECK(isInteger(noSteps.query(second->getResult(0)), 8));
 }
 
 void testPartialResultsAndLifetime() {
@@ -346,41 +304,28 @@ void testPartialResultsAndLifetime() {
   CHECK(isInteger(*first, 5));
 }
 
-void testPartialHitFillsWithoutSearching() {
+void testPartialHitFills() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key, 2);
+  Operation *candidate = f.keyedOp(1, 2);
   behaviors.at(candidate).evaluate = [](Operation *, EvalScope &scope) {
     return SmallVector<Answer>{integer(scope.getAllocator(), 7),
                                EvalStatus::NeedsOrder};
   };
   CHECK(engine.query(candidate->getResult(1)).status == EvalStatus::NeedsOrder);
-  Operation *op = f.hashedOp(key, 2);
-  unsigned comparisons = 0;
-  behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
-    ++comparisons;
-    return other == candidate;
-  };
+  // `op` shares `candidate`'s entry, whose second slot is empty, so the lookup
+  // misses and the evaluation fills the slot.
+  Operation *op = f.keyedOp(1, 2);
   behaviors.at(op).evaluate = [](Operation *, EvalScope &scope) {
     return SmallVector<Answer>{integer(scope.getAllocator(), 7),
                                integer(scope.getAllocator(), 8)};
   };
-  CHECK(isInteger(engine.query(op->getResult(1)), 8));
-  CHECK(behaviors.at(op).hashes == 1);
-  CHECK(comparisons == 1);
-  CHECK(isInteger(engine.query(candidate->getResult(1)), 8));
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(op->getResult(1), outcome), 8));
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(isInteger(engine.query(candidate->getResult(1), outcome), 8));
+  CHECK(outcome == CacheOutcome::Hit);
   CHECK(behaviors.at(candidate).evaluations == 1);
-}
-
-void testMissHashesOnce() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
-  Operation *op = f.op(3);
-  Answer answer = engine.query(op->getResult(0));
-  CHECK(isInteger(answer, 7));
-  CHECK(answer.getValue().isCached());
-  CHECK(behaviors.at(op).hashes == 1);
 }
 
 void testSignalsAndOptOut() {
@@ -388,237 +333,114 @@ void testSignalsAndOptOut() {
        {EvalStatus::Exhausted, EvalStatus::NeedsOrder, EvalStatus::Cycle}) {
     Fixture f;
     Engine engine(f.evalContext, 1000);
-    Operation *unhashable = f.op();
-    behaviors.at(unhashable).hash =
-        [signal](Operation *, EvalScope &) -> EvalResult<llvm::hash_code> {
-      return signal;
+    Operation *input = f.op();
+    uncacheable(input);
+    bool signals = true;
+    behaviors.at(input).evaluate = [&](Operation *, EvalScope &scope) {
+      if (signals)
+        return SmallVector<Answer>{signal};
+      return SmallVector<Answer>{integer(scope.getAllocator(), 1)};
     };
-    Answer hashFailure = engine.query(unhashable->getResult(0));
-    CHECK(hashFailure.status == signal);
-    CHECK(!hashFailure.isUnknown());
-    CHECK(behaviors.at(unhashable).evaluations == 0);
+    Value later = f.uncached(2);
+    Operation *op = f.op(1, {input->getResult(0), later});
 
-    // An equivalence signal skips the candidate instead of failing the lookup.
-    auto key = llvm::hash_code(123);
-    Operation *candidate = f.hashedOp(key);
-    CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
-    Operation *op = f.hashedOp(key);
-    behaviors.at(op).equal = [signal](Operation *, Operation *,
-                                      EvalScope &) -> EvalResult<bool> {
-      return signal;
-    };
-    Answer skipped = engine.query(op->getResult(0));
-    CHECK(isInteger(skipped, 7));
-    CHECK(skipped.getValue().isCached());
-    CHECK(behaviors.at(op).evaluations == 1);
-    CHECK(isInteger(engine.query(op->getResult(0)), 7));
-    CHECK(behaviors.at(op).evaluations == 1);
+    // The signal ends the key, so `later` isn't evaluated, and neither is
+    // `op`.
+    CacheOutcome outcome;
+    Answer failure = engine.query(op->getResult(0), outcome);
+    CHECK(failure.status == signal);
+    CHECK(!failure.isUnknown());
+    CHECK(outcome == CacheOutcome::None);
+    CHECK(behaviors.at(later.getDefiningOp()).evaluations == 0);
+    CHECK(behaviors.at(op).evaluations == 0);
+    // Nothing was stored, so once the input completes, `op` misses.
+    signals = false;
+    CHECK(isInteger(engine.query(op->getResult(0), outcome), 7));
+    CHECK(outcome == CacheOutcome::Miss);
 
-    // Opting out skips hashing, so the signaling hash is never called.
-    uncacheable(unhashable);
-    CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
-    CHECK(isInteger(engine.query(unhashable->getResult(0)), 7));
-    CHECK(behaviors.at(unhashable).evaluations == 2);
-    CHECK(behaviors.at(unhashable).hashes == 1);
+    // Opting out skips the key, so an input `evaluate` doesn't query is never
+    // evaluated.
+    signals = true;
+    unsigned inputEvaluations = behaviors.at(input).evaluations;
+    Operation *optedOut = f.op(1, input->getResult(0));
+    uncacheable(optedOut);
+    answer(optedOut, 7);
+    CHECK(isInteger(engine.query(optedOut->getResult(0)), 7));
+    CHECK(isInteger(engine.query(optedOut->getResult(0)), 7));
+    CHECK(behaviors.at(optedOut).evaluations == 2);
+    CHECK(behaviors.at(input).evaluations == inputEvaluations);
   }
 }
 
-/// Queries enough new operations to rehash the map and grow `key`'s bucket,
-/// then queries `equivalent`.
-void populate(Fixture &f, EvalScope &scope, llvm::hash_code key,
-              Operation *equivalent) {
+/// Queries enough new ops to rehash the cache's map.
+void populate(Fixture &f, EvalScope &scope) {
   for (unsigned i = 0; i != 256; ++i)
-    scope.query(f.hashedOp(llvm::hash_code(1000 + i))->getResult(0));
-  for (unsigned i = 0; i != 32; ++i)
-    scope.query(f.hashedOp(key)->getResult(0));
-  scope.query(equivalent->getResult(0));
+    scope.query(f.op()->getResult(0));
 }
 
-Operation *equivalentTo(Fixture &f, llvm::hash_code key, Operation *op) {
-  Operation *equivalent = f.hashedOp(key);
-  behaviors.at(equivalent).equal = [op](Operation *, Operation *other,
-                                        EvalScope &) { return other == op; };
-  behaviors.at(equivalent).evaluate = [](Operation *, EvalScope &scope) {
-    return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
-  };
-  return equivalent;
-}
-
-void testNestedInsertionDuringLookup() {
+void testInsertionDuringEvaluation() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key);
-  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
-  Operation *query = f.hashedOp(key);
-  Operation *equivalent = equivalentTo(f, key, query);
-  bool populated = false;
-  behaviors.at(query).equal = [&](Operation *, Operation *other,
-                                  EvalScope &scope) {
-    if (!populated) {
-      populated = true;
-      populate(f, scope, key, equivalent);
-    }
-    return other == equivalent;
-  };
-  CHECK(isInteger(engine.query(query->getResult(0)), 8));
-  CHECK(populated);
-  CHECK(behaviors.at(query).evaluations == 0);
-  CHECK(behaviors.at(equivalent).evaluations == 1);
-}
-
-void testNestedInsertionDuringInsert() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *op = f.hashedOp(key);
-  Operation *x = f.hashedOp(key);
-  Operation *equivalent = equivalentTo(f, key, op);
-  behaviors.at(op).evaluate = [x](Operation *, EvalScope &scope) {
-    scope.query(x->getResult(0));
+  // Evaluating `op` rehashes the map, then stores `equal` under `op`'s key, so
+  // `op`'s insertion finds that entry instead of adding another.
+  Operation *op = f.keyedOp(1);
+  Operation *equal = f.keyedOp(1);
+  answer(equal, 8);
+  behaviors.at(op).evaluate = [&](Operation *, EvalScope &scope) {
+    populate(f, scope);
+    scope.query(equal->getResult(0));
     return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
   };
-  bool populated = false;
-  behaviors.at(op).equal = [&](Operation *, Operation *other,
-                               EvalScope &scope) {
-    if (other == x && !populated) {
-      populated = true;
-      populate(f, scope, key, equivalent);
-    }
-    return other == equivalent;
-  };
+  CacheOutcome outcome;
   CHECK(isInteger(engine.query(op->getResult(0)), 8));
-  CHECK(populated);
+  CHECK(isInteger(engine.query(op->getResult(0), outcome), 8));
+  CHECK(outcome == CacheOutcome::Hit);
   CHECK(behaviors.at(op).evaluations == 1);
-  CHECK(behaviors.at(equivalent).evaluations == 1);
+  CHECK(behaviors.at(equal).evaluations == 1);
+
+  // A partial entry found by the lookup is filled after a rehash, since its
+  // slots don't move.
+  Operation *partial = f.keyedOp(2, 2);
+  behaviors.at(partial).evaluate = [](Operation *, EvalScope &scope) {
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7),
+                               EvalStatus::NeedsOrder};
+  };
+  CHECK(engine.query(partial->getResult(0)).status == EvalStatus::Completed);
+  Operation *filling = f.keyedOp(2, 2);
+  behaviors.at(filling).evaluate = [&](Operation *, EvalScope &scope) {
+    populate(f, scope);
+    return SmallVector<Answer>{integer(scope.getAllocator(), 7),
+                               integer(scope.getAllocator(), 9)};
+  };
+  CHECK(isInteger(engine.query(filling->getResult(1)), 9));
+  CHECK(isInteger(engine.query(partial->getResult(1), outcome), 9));
+  CHECK(outcome == CacheOutcome::Hit);
 }
 
-void testInsertResumesSearch() {
+void testCycleThroughInput() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key);
-  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
-  Operation *op = f.hashedOp(key);
-  Operation *x = f.hashedOp(key);
-  behaviors.at(op).evaluate = [x](Operation *, EvalScope &scope) {
-    scope.query(x->getResult(0));
-    return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
-  };
-  std::map<Operation *, unsigned> comparisons;
-  behaviors.at(op).equal = [&](Operation *, Operation *other, EvalScope &) {
-    ++comparisons[other];
-    return false;
-  };
-  Answer answer = engine.query(op->getResult(0));
-  CHECK(isInteger(answer, 7));
-  CHECK(answer.getValue().isCached());
-  CHECK(comparisons[candidate] == 1);
-  CHECK(comparisons[x] == 1);
-}
-
-void testEquivalenceConsumesBudget() {
-  Fixture f;
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key);
-  Engine large(f.evalContext, 1000);
-  CHECK(isInteger(large.query(candidate->getResult(0)), 7));
-  Operation *n1 = f.op();
-  Operation *n2 = f.op();
-  uncacheable(n1);
-  uncacheable(n2);
-  Operation *op = f.hashedOp(key);
-  behaviors.at(op).equal = [n1, n2](Operation *, Operation *,
-                                    EvalScope &scope) {
-    scope.query(n1->getResult(0));
-    scope.query(n2->getResult(0));
-    return false;
-  };
-  // Comparing with `candidate` spends both steps, and skipping it refunds
-  // nothing.
-  Engine twoSteps(f.evalContext, 2);
-  CHECK(twoSteps.query(op->getResult(0)).status == EvalStatus::Exhausted);
-  CHECK(behaviors.at(op).evaluations == 0);
-  Engine threeSteps(f.evalContext, 3);
-  CHECK(isInteger(threeSteps.query(op->getResult(0)), 7));
-}
-
-void testResultCountFilter() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key, 2);
-  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
-  Operation *op = f.hashedOp(key);
-  unsigned comparisons = 0;
-  // Deliberately wrong: claims equivalence with every candidate.
-  behaviors.at(op).equal = [&](Operation *, Operation *, EvalScope &) {
-    ++comparisons;
-    return true;
-  };
-  CHECK(isInteger(engine.query(op->getResult(0)), 7));
-  CHECK(comparisons == 0);
-  CHECK(behaviors.at(op).evaluations == 1);
-}
-
-void testInsertionAfterEvaluation() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *op = f.hashedOp(key);
-  Operation *equivalent = equivalentTo(f, key, op);
-  behaviors.at(op).equal = [equivalent](Operation *, Operation *other,
-                                        EvalScope &) {
-    return other == equivalent;
-  };
-  behaviors.at(op).evaluate = [equivalent](Operation *, EvalScope &scope) {
-    scope.query(equivalent->getResult(0));
-    return SmallVector<Answer>{integer(scope.getAllocator(), 7)};
-  };
-  CHECK(isInteger(engine.query(op->getResult(0)), 8));
-  CHECK(behaviors.at(op).hashes == 1);
-  CHECK(isInteger(engine.query(op->getResult(0)), 8));
-  CHECK(behaviors.at(op).evaluations == 1);
-}
-
-void testCycleThroughEquivalence() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *candidate = f.hashedOp(key);
-  CHECK(isInteger(engine.query(candidate->getResult(0)), 7));
-  Operation *op = f.hashedOp(key);
-  std::optional<EvalStatus> recorded;
-  behaviors.at(op).equal = [&](Operation *op, Operation *,
-                               EvalScope &scope) -> EvalResult<bool> {
-    Answer answer = scope.query(op->getResult(0));
-    recorded = answer.status;
-    if (!answer.completed())
-      return answer.status;
-    return false;
-  };
-  CHECK(isInteger(engine.query(op->getResult(0)), 7));
-  CHECK(recorded == EvalStatus::Cycle);
-  CHECK(behaviors.at(op).evaluations == 1);
-}
-
-void testCycleThroughHash() {
-  Fixture f;
-  Engine engine(f.evalContext, 1000);
+  // `back` is `op`'s input and queries `op`, so building `op`'s key re-enters
+  // it.
   Operation *op = f.op();
-  behaviors.at(op).hash = [](Operation *op,
-                             EvalScope &scope) -> EvalResult<llvm::hash_code> {
-    Answer answer = scope.query(op->getResult(0));
-    if (!answer.completed())
-      return answer.status;
-    return llvm::hash_value(op);
+  Operation *back = f.op();
+  uncacheable(back);
+  bool loops = true;
+  behaviors.at(back).evaluate = [&](Operation *self, EvalScope &scope) {
+    if (loops) {
+      Answer answer = scope.query(op->getResult(0));
+      if (!answer.completed())
+        return answer.propagate(self);
+    }
+    return SmallVector<Answer>{integer(scope.getAllocator(), 3)};
   };
+  op->setOperands(back->getResult(0));
   Answer cycle = engine.query(op->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
   CHECK(!cycle.isUnknown());
   CHECK(behaviors.at(op).evaluations == 0);
   // `op` must have left the active set on the early return.
-  behaviors.at(op).hash = Behavior().hash;
+  loops = false;
   CHECK(isInteger(engine.query(op->getResult(0)), 7));
 }
 
@@ -629,13 +451,29 @@ void testCycleThroughOperands() {
   Operation *x = f.op();
   Operation *y = f.op(1, x->getResult(0));
   x->setOperands(y->getResult(0));
+  // Each key evaluates the other op, so the cycle ends both lookups before
+  // either op is evaluated.
   Answer cycle = engine.query(x->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
   CHECK(!cycle.isUnknown());
-  CHECK(behaviors.at(x).evaluations == 1);
-  CHECK(behaviors.at(y).evaluations == 1);
+  CHECK(behaviors.at(x).evaluations == 0);
+  CHECK(behaviors.at(y).evaluations == 0);
   x->setOperands({});
   CHECK(isInteger(engine.query(y->getResult(0)), 7));
+}
+
+void testSelfUseIsInner() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  // In a graph region, an op can use its own result. Its key numbers the use
+  // as an inner value, so the lookup queries nothing and completes, and only
+  // the evaluation re-enters `op`.
+  Operation *op = f.op();
+  op->setOperands(op->getResult(0));
+  CacheOutcome outcome;
+  CHECK(engine.query(op->getResult(0), outcome).status == EvalStatus::Cycle);
+  CHECK(outcome == CacheOutcome::Miss);
+  CHECK(behaviors.at(op).evaluations == 1);
 }
 
 void testMemoizedOperand() {
@@ -644,13 +482,13 @@ void testMemoizedOperand() {
   Operation *n = f.op();
   uncacheable(n);
   Operation *a = f.op(1, n->getResult(0));
-  semanticKey(a);
-  // Hashing and evaluating `a` share one evaluation of `n`.
+  // Building `a`'s key and evaluating `a` share one evaluation of `n`.
   CHECK(isInteger(engine.query(a->getResult(0)), 7));
   CHECK(behaviors.at(n).evaluations == 1);
-  // The memo is per query, so hashing `a` again evaluates `n` again.
+  // The memo is per query, so the key evaluates `n` again, then hits.
   CHECK(isInteger(engine.query(a->getResult(0)), 7));
   CHECK(behaviors.at(n).evaluations == 2);
+  CHECK(behaviors.at(a).evaluations == 1);
 }
 
 void testMemoizedSiblings() {
@@ -669,19 +507,25 @@ void testLazyOperands() {
   Fixture f;
   Engine oneStep(f.evalContext, 1);
   Operation *operand = f.op();
+  // A key evaluates every operand, so an op that may not need one opts out.
   Operation *ignoring = f.op(1, operand->getResult(0));
-  behaviors.at(ignoring).evaluate = [](Operation *, EvalScope &scope) {
-    return SmallVector<Answer>{integer(scope.getAllocator(), 8)};
-  };
+  uncacheable(ignoring);
+  answer(ignoring, 8);
   // `ignoring` never queries its operand, so it costs only its own step.
   CHECK(isInteger(oneStep.query(ignoring->getResult(0)), 8));
   CHECK(behaviors.at(operand).evaluations == 0);
   // The step is charged before `evaluate` runs, so `user` runs and its operand
   // exhausts.
   Operation *user = f.op(1, operand->getResult(0));
+  uncacheable(user);
   CHECK(oneStep.query(user->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(user).evaluations == 1);
   CHECK(behaviors.at(operand).evaluations == 0);
+  // A cached op's key evaluates the operand first, which takes the step.
+  Operation *keyed = f.op(1, operand->getResult(0));
+  CHECK(oneStep.query(keyed->getResult(0)).status == EvalStatus::Exhausted);
+  CHECK(behaviors.at(keyed).evaluations == 0);
+  CHECK(behaviors.at(operand).evaluations == 1);
 }
 
 void testEligibilityFromAttributes() {
@@ -704,7 +548,6 @@ void testEligibilityFromAttributes() {
     CHECK(!answer.getValue().isCached());
     CHECK(outcome == CacheOutcome::None);
   }
-  CHECK(behaviors.at(small).hashes == 0);
   CHECK(behaviors.at(small).evaluations == 2);
 }
 
@@ -719,7 +562,6 @@ void testEligibilityFromOperands() {
   // evaluation then reuses, and evaluating `large` takes the second.
   Engine noSteps(f.evalContext, 0);
   CHECK(noSteps.query(large->getResult(0)).status == EvalStatus::Exhausted);
-  CHECK(behaviors.at(large).hashes == 0);
   Engine oneStep(f.evalContext, 1);
   CHECK(oneStep.query(large->getResult(0)).status == EvalStatus::Exhausted);
   CHECK(behaviors.at(large).evaluations == 0);
@@ -731,7 +573,6 @@ void testEligibilityFromOperands() {
 
   CHECK(isInteger(twoSteps.query(small->getResult(0)), 7));
   CHECK(isInteger(twoSteps.query(small->getResult(0)), 7));
-  CHECK(behaviors.at(small).hashes == 0);
   CHECK(behaviors.at(small).evaluations == 2);
 }
 
@@ -745,10 +586,8 @@ void testEligibilitySharesMemo() {
   };
   Operation *a = f.op(1, n->getResult(0));
   operandEligibility(a);
-  semanticKey(a);
-  // Eligibility, hashing and evaluating `a` share one evaluation of `n`.
+  // Eligibility, the key and evaluating `a` share one evaluation of `n`.
   CHECK(isInteger(engine.query(a->getResult(0)), 7));
-  CHECK(behaviors.at(a).hashes == 1);
   CHECK(behaviors.at(n).evaluations == 1);
 }
 
@@ -767,7 +606,6 @@ void testEligibilitySignals() {
     CHECK(answer.status == signal);
     CHECK(!answer.isUnknown());
     CHECK(outcome == CacheOutcome::None);
-    CHECK(behaviors.at(op).hashes == 0);
     CHECK(behaviors.at(op).evaluations == 0);
   }
 }
@@ -786,7 +624,6 @@ void testCycleThroughEligibility() {
   Answer cycle = engine.query(op->getResult(0));
   CHECK(cycle.status == EvalStatus::Cycle);
   CHECK(behaviors.at(op).eligibilityChecks == 1);
-  CHECK(behaviors.at(op).hashes == 0);
   CHECK(behaviors.at(op).evaluations == 0);
   // `op` must have left the active set on the early return.
   behaviors.at(op).cacheable = Behavior().cacheable;
@@ -796,29 +633,28 @@ void testCycleThroughEligibility() {
 void testUncacheableOpsCanBeKeyed() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
-  Operation *x = f.op(1, f.constant(9));
-  Operation *y = f.op(1, f.constant(9));
-  Operation *z = f.op(1, f.constant(8));
-  for (Operation *op : {x, y, z}) {
-    uncacheable(op);
-    semanticKey(op);
-  }
-  // `outer` keys them as an op comparing the ops in its region would.
-  Operation *outer = f.op();
-  behaviors.at(outer).evaluate = [x, y, z](Operation *, EvalScope &scope) {
-    auto key = cast<EvaluableOpInterface>(x);
-    auto hash = key.getHash(scope);
-    auto otherHash = cast<EvaluableOpInterface>(y).getHash(scope);
-    auto same = key.isEquivalentTo(y, scope);
-    auto different = key.isEquivalentTo(z, scope);
-    bool keyed = hash.completed() && otherHash.completed() &&
-                 same.completed() && different.completed() &&
-                 hash.getValue() == otherHash.getValue() && same.getValue() &&
-                 !different.getValue();
-    return SmallVector<Answer>{integer(scope.getAllocator(), keyed)};
+  SmallVector<Operation *> nested;
+  // Each region op holds an uncacheable op whose key is `key`.
+  auto withNested = [&](int64_t key) {
+    return executeRegion(f.builder, [&] {
+      Operation *op = f.keyedOp(key, 1, f.constant(9));
+      uncacheable(op);
+      nested.push_back(op);
+      return op->getResult(0);
+    });
   };
-  CHECK(isInteger(engine.query(outer->getResult(0)), 1));
-  for (Operation *op : {x, y, z}) {
+  Value first = withNested(1);
+  Value second = withNested(1);
+  Value other = withNested(2);
+  CacheOutcome outcome;
+  for (auto [value, expected] : {std::pair(first, CacheOutcome::Miss),
+                                 std::pair(second, CacheOutcome::Hit),
+                                 std::pair(other, CacheOutcome::Miss)}) {
+    CHECK(isInteger(engine.query(value, outcome), 7));
+    CHECK(outcome == expected);
+  }
+  // Nested ops are only structure in their region op's key.
+  for (Operation *op : nested) {
     CHECK(behaviors.at(op).eligibilityChecks == 0);
     CHECK(behaviors.at(op).evaluations == 0);
   }
@@ -827,15 +663,12 @@ void testUncacheableOpsCanBeKeyed() {
 void testIdentityValueKeys() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
-  auto key = llvm::hash_code(123);
-  Operation *producer = f.hashedOp(key);
-  Operation *equivalent = equivalentTo(f, key, producer);
+  Operation *producer = f.keyedOp(1);
+  Operation *equal = f.keyedOp(1);
   opaque(producer);
-  opaque(equivalent);
-  Operation *a = f.op(1, producer->getResult(0));
-  Operation *b = f.op(1, equivalent->getResult(0));
-  semanticKey(a);
-  semanticKey(b);
+  opaque(equal);
+  Operation *a = f.keyedOp(2, 1, producer->getResult(0));
+  Operation *b = f.keyedOp(2, 1, equal->getResult(0));
   // `producer`'s answer is the instance the cache retained, so `a`'s key is
   // the same in every query.
   CacheOutcome outcome;
@@ -843,14 +676,14 @@ void testIdentityValueKeys() {
   CHECK(outcome == CacheOutcome::Miss);
   CHECK(isInteger(engine.query(a->getResult(0), outcome), 7));
   CHECK(outcome == CacheOutcome::Hit);
-  // `equivalent` hits `producer`'s entry, so `b`'s key holds the same
-  // instance as `a`'s and `b` hits too.
+  // `equal` hits `producer`'s entry, so `b`'s key holds the same instance as
+  // `a`'s and `b` hits too.
   CHECK(isInteger(engine.query(b->getResult(0), outcome), 7));
   CHECK(outcome == CacheOutcome::Hit);
   CHECK(behaviors.at(a).evaluations == 1);
   CHECK(behaviors.at(b).evaluations == 0);
   CHECK(behaviors.at(producer).evaluations == 1);
-  CHECK(behaviors.at(equivalent).evaluations == 0);
+  CHECK(behaviors.at(equal).evaluations == 0);
 
   // Uncached producers answer with a new instance each, so keys holding equal
   // contents still differ.
@@ -860,24 +693,12 @@ void testIdentityValueKeys() {
     opaque(op);
     uncacheable(op);
   }
-  Operation *c = f.op(1, first->getResult(0));
-  Operation *d = f.op(1, second->getResult(0));
-  semanticKey(c);
-  semanticKey(d);
+  Operation *c = f.keyedOp(3, 1, first->getResult(0));
+  Operation *d = f.keyedOp(3, 1, second->getResult(0));
   CHECK(isInteger(engine.query(c->getResult(0)), 7));
   CHECK(isInteger(engine.query(d->getResult(0), outcome), 7));
   CHECK(outcome == CacheOutcome::Miss);
   CHECK(behaviors.at(d).evaluations == 1);
-}
-
-/// Creates an `scf.execute_region` that yields the value `body` creates in it.
-Value executeRegion(OpBuilder &builder, function_ref<Value()> body) {
-  Location loc = builder.getUnknownLoc();
-  auto op = scf::ExecuteRegionOp::create(builder, loc, builder.getI32Type());
-  OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToStart(&op.getRegion().emplaceBlock());
-  scf::YieldOp::create(builder, loc, body());
-  return op.getResult(0);
 }
 
 void testSideEffectsOptOut() {
@@ -991,7 +812,7 @@ void addOne(Operation *op) {
 void testLoopBodyReadsCache() {
   Fixture f;
   Location loc = f.builder.getUnknownLoc();
-  Operation *top = f.op(1, f.constant(1));
+  Operation *top = f.keyedOp(1, 1, f.constant(1));
   Value zero = f.constant(0);
   auto loop = scf::ForOp::create(f.builder, loc, zero, f.constant(3),
                                  f.constant(1), zero);
@@ -999,13 +820,11 @@ void testLoopBodyReadsCache() {
   {
     OpBuilder::InsertionGuard guard(f.builder);
     f.builder.setInsertionPointToStart(loop.getBody());
-    body = f.op(1, loop.getRegionIterArgs()[0]);
+    body = f.keyedOp(1, 1, loop.getRegionIterArgs()[0]);
     scf::YieldOp::create(f.builder, loc, body->getResult(0));
   }
-  for (Operation *op : {top, body}) {
-    semanticKey(op);
-    addOne(op);
-  }
+  addOne(top);
+  addOne(body);
   Engine engine(f.evalContext, 1000);
   CacheOutcome outcome;
   CHECK(isInteger(engine.query(top->getResult(0), outcome), 2));
@@ -1016,7 +835,7 @@ void testLoopBodyReadsCache() {
   Behavior &behavior = behaviors.at(body);
   CHECK(isInteger(engine.query(loop.getResult(0), outcome), 3));
   CHECK(outcome == CacheOutcome::Miss);
-  CHECK(behavior.eligibilityChecks == 3 && behavior.hashes == 3);
+  CHECK(behavior.eligibilityChecks == 3);
   CHECK(behavior.evaluations == 2);
 
   // The loop itself is cached.
@@ -1050,7 +869,6 @@ void testLoopFreezesCache() {
     body = f.op(1, loop.getRegionIterArgs()[0]);
     scf::YieldOp::create(f.builder, loc, body->getResult(0));
   }
-  semanticKey(body);
   addOne(body);
 
   Engine engine(f.evalContext, 1000);
@@ -1065,24 +883,95 @@ void testLoopFreezesCache() {
   CHECK(behavior.evaluations == 6);
 }
 
+void testCapturedBinding() {
+  Fixture f;
+  Location loc = f.builder.getUnknownLoc();
+  // The loop never runs: `probe` binds its body without a freeze.
+  Value zero = f.constant(0);
+  auto loop = scf::ForOp::create(f.builder, loc, zero, zero, zero);
+  Value captures;
+  {
+    OpBuilder::InsertionGuard guard(f.builder);
+    f.builder.setInsertionPointToStart(loop.getBody());
+    captures = executeRegion(f.builder, [&] {
+      return f.op(1, loop.getInductionVar())->getResult(0);
+    });
+  }
+  Operation *region = captures.getDefiningOp();
+  int64_t bound = 0;
+  Operation *probe = f.op();
+  uncacheable(probe);
+  behaviors.at(probe).evaluate = [&](Operation *, EvalScope &scope) {
+    BlockBinding binding =
+        scope.bind(loop.getBody(), {integer(scope.getAllocator(), bound)});
+    return SmallVector<Answer>{scope.query(captures)};
+  };
+
+  // `region` has no operands, but its key holds the bound value its body
+  // captures, so an entry stored under 5 is only hit under 5.
+  Engine engine(f.evalContext, 1000);
+  for (auto [value, evaluations] :
+       {std::pair(5, 1), std::pair(5, 1), std::pair(6, 2), std::pair(5, 2)}) {
+    bound = value;
+    CHECK(isInteger(engine.query(probe->getResult(0)), 7));
+    CHECK(behaviors[region].evaluations == unsigned(evaluations));
+  }
+}
+
+void testCapturedValues() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Value c2 = f.constant(2);
+  Value c3 = f.constant(3);
+  Value two = f.constant(2);
+  // The region ops have no operands, and their bodies capture `value`.
+  auto capturing = [&](Value value) {
+    return executeRegion(f.builder,
+                         [&] { return f.keyedOp(1, 1, value)->getResult(0); });
+  };
+  CacheOutcome outcome;
+  for (auto [value, expected] :
+       {std::pair(capturing(c2), CacheOutcome::Miss),
+        std::pair(capturing(c3), CacheOutcome::Miss),
+        std::pair(capturing(two), CacheOutcome::Hit)}) {
+    CHECK(isInteger(engine.query(value, outcome), 7));
+    CHECK(outcome == expected);
+  }
+}
+
+void testErasedOp() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  Location loc = f.builder.getUnknownLoc();
+  Value c2 = f.constant(2);
+  // The overflow flags are properties, which the entry copies.
+  auto add = [&]() -> Operation * {
+    return arith::AddIOp::create(f.builder, loc, c2, c2,
+                                 arith::IntegerOverflowFlags::nsw);
+  };
+  Operation *erased = add();
+  CHECK(isInteger(engine.query(erased->getResult(0)), 7));
+  behaviors.erase(erased);
+  erased->erase();
+  // The entry holds no reference to the erased op, so an equal op hits it.
+  Operation *equal = add();
+  CacheOutcome outcome;
+  CHECK(isInteger(engine.query(equal->getResult(0), outcome), 7));
+  CHECK(outcome == CacheOutcome::Hit);
+  CHECK(behaviors[equal].evaluations == 0);
+}
+
 }
 
 int main() {
   testSemanticReuseAndBudget();
-  testZeroHashCollision();
   testPartialResultsAndLifetime();
-  testPartialHitFillsWithoutSearching();
-  testMissHashesOnce();
+  testPartialHitFills();
   testSignalsAndOptOut();
-  testNestedInsertionDuringLookup();
-  testNestedInsertionDuringInsert();
-  testInsertResumesSearch();
-  testEquivalenceConsumesBudget();
-  testResultCountFilter();
-  testInsertionAfterEvaluation();
-  testCycleThroughEquivalence();
-  testCycleThroughHash();
+  testInsertionDuringEvaluation();
+  testCycleThroughInput();
   testCycleThroughOperands();
+  testSelfUseIsInner();
   testMemoizedOperand();
   testMemoizedSiblings();
   testLazyOperands();
@@ -1097,6 +986,9 @@ int main() {
   testConstants();
   testLoopBodyReadsCache();
   testLoopFreezesCache();
+  testCapturedBinding();
+  testCapturedValues();
+  testErasedOp();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
   return failures ? 1 : 0;
