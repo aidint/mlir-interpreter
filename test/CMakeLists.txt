@@ -39,20 +39,6 @@ target_link_libraries(eval-cache-key-test PRIVATE
   MLIRSupport
   LLVMSupport)
 
-add_executable(eval-operation-equivalence-test EvalOperationEquivalence.cpp)
-
-target_link_libraries(eval-operation-equivalence-test PRIVATE
-  Interpreter
-  InterpreterBuiltin
-  MLIRArithDialect
-  MLIRControlFlowDialect
-  MLIRFuncDialect
-  MLIRIR
-  MLIRParser
-  MLIRSCFDialect
-  MLIRSupport
-  LLVMSupport)
-
 add_executable(eval-value-test EvalValue.cpp)
 
 target_link_libraries(eval-value-test PRIVATE
@@ -87,4 +73,4 @@ add_lit_testsuite(check-interpreter "Running the interpreter tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   ${PROJECT_BINARY_DIR}/examples
   DEPENDS FileCheck count not interpreter engine-lifetime-test eval-cache-test
-          eval-cache-key-test eval-operation-equivalence-test eval-value-test)
+          eval-cache-key-test eval-value-test)

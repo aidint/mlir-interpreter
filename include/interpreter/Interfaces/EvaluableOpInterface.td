@@ -12,27 +12,6 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
 
   let methods = [
     InterfaceMethod<[{
-        Hashes this operation, or returns Exhausted, NeedsOrder or Cycle.
-        Operations that `isEquivalentTo` matches must hash equally.
-      }],
-      "::mlir::interpreter::EvalResult<::llvm::hash_code>", "getHash",
-      (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
-      /*defaultImplementation=*/[{
-        return ::mlir::interpreter::detail::getDefaultHash($_op.getOperation(),
-                                                         scope);
-      }]>,
-    InterfaceMethod<[{
-        Returns whether `other` computes the same results as this operation, or
-        returns Exhausted, NeedsOrder or Cycle. Must be symmetric.
-      }],
-      "::mlir::interpreter::EvalResult<bool>", "isEquivalentTo",
-      (ins "::mlir::Operation *":$other,
-           "::mlir::interpreter::EvalScope &":$scope), [{}],
-      /*defaultImplementation=*/[{
-        return ::mlir::interpreter::detail::isDefaultEquivalent(
-            $_op.getOperation(), other, scope);
-      }]>,
-    InterfaceMethod<[{
         Returns one answer per result. Operands are queried through `scope`, and
         a signal from one must be propagated, e.g. with `Answer::propagate`.
       }],
@@ -40,10 +19,11 @@ def EvaluableOpInterface : OpInterface<"EvaluableOpInterface"> {
       (ins "::mlir::interpreter::EvalScope &":$scope)>,
     InterfaceMethod<[{
         Returns whether this operation's results may be retained across queries,
-        or returns Exhausted, NeedsOrder or Cycle. By default only operations
-        without side effects or successors are cached, as `defaultIsCacheable`
-        decides. An override must not cache an operation with successors
-        either, and can call `defaultIsCacheable` to keep both rules.
+        or returns Exhausted, NeedsOrder or Cycle. A cached operation is keyed by
+        its structure and the answers of its inputs, which are all evaluated
+        before the lookup, so its results must depend on nothing else. By
+        default, operations without side effects or successors are cached, as
+        `defaultIsCacheable` decides.
       }],
       "::mlir::interpreter::EvalResult<bool>", "isCacheable",
       (ins "::mlir::interpreter::EvalScope &":$scope), [{}],
