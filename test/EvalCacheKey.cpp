@@ -305,6 +305,8 @@ void testRegions() {
   CHECK(!f.same("r1", "r2"));
 
   CHECK(f.same("n1", "n2"));
+  // Both capture a 2 and a 3, so the keys are equal too.
+  CHECK(f.sameKey("n1", "n2"));
   CHECK(f.same("n1", "n3"));
   CHECK(f.snapshot("n3").outerValues == f.values({"c3", "c3"}));
   CHECK(!f.same("n1", "r1"));
@@ -370,6 +372,7 @@ void testBlocks() {
     }
   )mlir");
   CHECK(f.same("b1", "b2"));
+  CHECK(f.sameKey("b1", "b2"));
   const EvalCacheRegion &b1 = f.snapshot("b1").op->regions[0];
   CHECK(b1.blocks.size() == 2);
   CHECK(b1.blocks[0].ops[0].successors == ArrayRef<unsigned>{1});
@@ -380,6 +383,7 @@ void testBlocks() {
   CHECK(!f.same("b3", "b4"));
 
   CHECK(f.same("d1", "d2"));
+  CHECK(f.sameKey("d1", "d2"));
   // The yield's `%w` was parked, then found to be defined inside.
   Snapshot d1 = f.snapshot("d1");
   CHECK(refsAre(d1.op->regions[0].blocks[1].ops[0].operands, {inner(1)}));
