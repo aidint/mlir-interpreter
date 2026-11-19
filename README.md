@@ -40,6 +40,8 @@ build/debug/third_party/llvm-project/llvm/bin/llvm-lit build/debug/examples/05-z
   `RUN` and `CHECK` lines.
 - `test/`: the shared `lit` config, tool tests, and the C++ regressions
   `engine-lifetime` (allocator lifetimes) and `eval-cache` (the cache).
+  `test/InterpTest/` defines the `interp_test` dialect, for operations the tests
+  need that the linked dialects lack.
 
 ## interpreter
 

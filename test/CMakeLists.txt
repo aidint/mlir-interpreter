@@ -1,3 +1,5 @@
+add_subdirectory(InterpTest)
+
 add_executable(engine-lifetime-test EngineLifetime.cpp)
 
 target_link_libraries(engine-lifetime-test PRIVATE
@@ -17,6 +19,7 @@ target_link_libraries(eval-cache-test PRIVATE
   Interpreter
   InterpreterBuiltin
   InterpreterSCF
+  InterpTest
   MLIRArithDialect
   MLIRIR
   MLIRMemRefDialect

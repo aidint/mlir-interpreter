@@ -1,3 +1,4 @@
+#include "InterpTestDialect.h"
 #include "interpreter/Dialects/Builtin/BuiltinAttrEval.h"
 #include "interpreter/Dialects/Builtin/BuiltinEvalValues.h"
 #include "interpreter/Dialects/SCF/SCFEval.h"
@@ -144,8 +145,9 @@ struct Fixture {
   OpBuilder builder{module->getBody(), module->getBody()->begin()};
 
   Fixture() {
-    context.loadDialect<arith::ArithDialect, memref::MemRefDialect,
-                        scf::SCFDialect, ub::UBDialect>();
+    context
+        .loadDialect<arith::ArithDialect, interp_test::InterpTestDialect,
+                     memref::MemRefDialect, scf::SCFDialect, ub::UBDialect>();
     UnrealizedConversionCastOp::attachInterface<TestModel>(context);
     ub::PoisonAttr::attachInterface<PoisonAttrEval>(context);
     arith::AddIOp::attachInterface<DefaultModel<arith::AddIOp>>(context);
@@ -965,6 +967,30 @@ void testCapturedValues() {
   }
 }
 
+void testCopiedPropertiesAreFreed() {
+  Fixture f;
+  Engine engine(f.evalContext, 1000);
+  // The label is too long for `std::string`'s inline buffer, so the cache's
+  // copy of the nested op's properties owns heap memory, which only
+  // `destroyOpProperties` frees. Under LSan, skipping it fails this test.
+  auto labeled = [&] {
+    return executeRegion(f.builder, [&]() -> Value {
+      return interp_test::PropOp::create(
+          f.builder, f.builder.getUnknownLoc(), f.builder.getI32Type(),
+          "a label longer than any inline buffer");
+    });
+  };
+  Value first = labeled();
+  Value second = labeled();
+  // Properties are compared by content, so the second op hits.
+  CacheOutcome outcome;
+  for (auto [value, expected] : {std::pair(first, CacheOutcome::Miss),
+                                 std::pair(second, CacheOutcome::Hit)}) {
+    CHECK(isInteger(engine.query(value, outcome), 7));
+    CHECK(outcome == expected);
+  }
+}
+
 void testErasedOp() {
   Fixture f;
   Engine engine(f.evalContext, 1000);
@@ -987,7 +1013,7 @@ void testErasedOp() {
   CHECK(behaviors[equal].evaluations == 0);
 }
 
-}
+} // namespace
 
 int main() {
   testSemanticReuseAndBudget();
@@ -1015,6 +1041,7 @@ int main() {
   testLoopFreezesCache();
   testCapturedBinding();
   testCapturedValues();
+  testCopiedPropertiesAreFreed();
   testErasedOp();
   if (failures)
     llvm::errs() << failures << " check(s) failed\n";
